@@ -2,10 +2,16 @@
 
 승객의 대형 수하물과 특송 화물을 **좌석 거리·무게·하차 동선**을 고려해 자동 배치하는 프로토타입입니다.
 
-- **승객 화면 10단계** — 승차권 → 서비스 안내 → 수하물 등록 → 등록 판정 → 배정 대기 → 배정 완료 → 위치 안내 → QR 확인증 → 등록 관리 → 문제 신고
-- **역무원 화면 10단계** — 담당 열차 홈 → 운영 요약 → AI 배정안 검토 → 전체 위치도 → 칸 상세 → 사전 준비 → 적재 → 하역 → 예외 처리 → 수동 재배정
+- **승객 화면 12개 (P-00 ~ P-11)** — 승차권 예매 → 승차권 상세 → 서비스 안내 → 수하물 크기 인식 → 등록 가능 판정 → 배정 대기 → 위치 배정 완료 → 내 수하물 위치 → QR 확인증 → 등록 관리 → 문제 신고 → 특송 이용 안내
+- **역무원 화면 8개 (S-01 ~ S-08)** — 담당 열차 홈 → 열차 운영 요약 → AI 배정안 검토 → 전체 적재 위치도 → 칸 상세 → 특송 작업 체크리스트 → 예외 처리 → 수동 재배정
+
+수하물을 실을 수 있는 호차는 **7·9·12·14호차** 네 량이고, 호차마다 보관대가 하나씩 있습니다
+(7호차=A · 9호차=B · 12호차=C · 14호차=D). 보관대 한 대는 상단 3칸·하단 3칸입니다.
 
 배포 구조는 **Vercel 정적 호스팅(Vite) + 서버리스 함수(`api/`)** 입니다.
+
+- 배포: <https://ktx-luggage-app-v2-source.vercel.app>
+- 저장소: <https://github.com/ans13i/re_move_jimcok>
 
 ---
 
@@ -109,7 +115,7 @@ curl -X POST http://localhost:3000/api/allocate \
 | `npm run build` | 프로덕션 빌드 → `dist/` |
 | `npm run preview` | 빌드 결과 미리보기 |
 | `npm run typecheck` | TypeScript 타입 검사 |
-| `npm test` | 검증기 단위 테스트 (20개) |
+| `npm test` | 검증기 단위 테스트 (20개, `node --test`) |
 
 ---
 
@@ -120,17 +126,21 @@ curl -X POST http://localhost:3000/api/allocate \
 ├── index.html            SPA 껍데기 (#root만 있음)
 ├── src/
 │   └── main.tsx          app/page.tsx를 마운트하는 진입점
-├── app/                  ⚠️ 팀원이 만든 UI — 수정 금지
+├── app/
 │   ├── page.tsx          승객·역무원 20개 화면 전체
 │   ├── globals.css       모바일 프레임·사물함형 위치도 디자인
 │   └── layout.tsx        Next 시절 잔재 (SPA에서는 미사용)
+├── app.js                DOM 후처리 레이어 — React가 그린 화면에 실제 배정값을 채움
 ├── api/                  Vercel 서버리스 함수 (파일 = 엔드포인트)
-│   └── allocate.js       POST /api/allocate — 전체 파이프라인
+│   ├── allocate.js       POST /api/allocate — 배치 파이프라인
+│   ├── reassign.js       POST /api/reassign — 막힌 칸의 대체 위치 순위 (AI 호출 없음)
+│   └── measure.js        POST /api/measure  — 사진에서 치수 추정 (현재 화면에서 미사용)
 ├── lib/
 │   ├── validator.js      배치안 검증 (순수)
 │   ├── fallback.js       규칙 기반 배치·칸 번호 부여 (순수)
-│   ├── train.js          잔여 공간 계산·하역 계획 파생 (순수)
+│   ├── train.js          호차·보관대 정의, 잔여 공간 계산, 하역 계획 파생 (순수)
 │   ├── claude.js         Claude 호출 ⚠️ 서버 전용
+│   ├── measure.js        사진 치수 추정 ⚠️ 서버 전용 (현재 미사용)
 │   └── env.js            로컬 .env 로더 ⚠️ 서버 전용
 ├── tests/
 │   └── validator.test.js 위반 코드별 단위 테스트
@@ -141,10 +151,17 @@ curl -X POST http://localhost:3000/api/allocate \
 └── _legacy-cloudflare/   이전 Cloudflare 스캐폴드 백업 (사용 안 함)
 ```
 
-### `app/`을 건드리지 않는 이유
+### React와 `app.js`가 화면을 나눠 그리는 방식
 
-UI는 이미 완성된 결과물입니다. 마크업·클래스명·스타일을 그대로 두고 AI 배치 기능만 얹는 것이 이 프로젝트의 전제입니다.
-`src/main.tsx`는 `app/page.tsx`를 **import해서 마운트만** 하며, 내부를 수정하지 않습니다.
+`app/page.tsx`가 화면의 **구조와 상호작용**을 그리고, `app.js`가 그 위에 **실제 배정 결과**를 채웁니다.
+React는 배정 결과를 모르므로 자리만 만들어 두고, `app.js`가 `data-app="…"` 훅을 찾아 값을 씁니다.
+
+React는 리렌더 때 자기가 아는 값으로 되돌리므로, `app.js`는 MutationObserver로 DOM이 바뀔 때마다 다시 적용합니다.
+`setText`·`paintHTML`은 값이 같으면 아무 것도 하지 않아 무한 루프가 나지 않습니다.
+
+> **주의** — HTML 문자열에 인라인 `style`을 넣지 마세요. 브라우저가 `width:65%`를 `width: 65%;`로
+> 정규화해 다음 패스에서 비교가 어긋나고, 매 프레임 DOM을 새로 만들어 **실제 클릭이 먹지 않습니다.**
+> 폭·색 같은 값은 그린 뒤에 `style.width`로 따로 지정하세요.
 
 ---
 
@@ -161,15 +178,15 @@ UI는 이미 완성된 결과물입니다. 마크업·클래스명·스타일을
   "train": {
     "trainNo": "KTX 123",
     "origin": "서울",
-    "stops": ["대전", "동대구", "부산"],   // 정차 순서
+    "stops": ["광교", "대전", "동대구", "부산"],   // 정차 순서
     "slots": [                              // 칸 목록 (lib/train.js의 createSlots로 생성 가능)
-      { "id": "7-B-03", "car": 7, "rack": "B", "index": 3,
-        "tier": "lower", "capacityL": 140, "available": true, "reservedFor": null }
+      { "id": "9-B-04", "car": 9, "rack": "B", "index": 4,
+        "tier": "lower", "capacityL": 120, "available": true, "reservedFor": null }
     ]
   },
   "items": [
-    { "id": "BAG-240812-017", "kind": "passenger", "volumeL": 120,
-      "isXLarge": true, "destination": "부산", "seatCar": 7, "seat": "12A" },
+    { "id": "BAG-01", "kind": "passenger", "volumeL": 90,
+      "isXLarge": false, "destination": "부산", "seatCar": 7, "seat": "12A" },
     { "id": "A13", "kind": "freight", "volumeL": 110,
       "isXLarge": false, "destination": "대전" }
   ]
@@ -181,11 +198,11 @@ UI는 이미 완성된 결과물입니다. 마크업·클래스명·스타일을
 ```jsonc
 {
   "allocations": [
-    { "itemId": "BAG-240812-017", "slotId": "9-B-04", "car": 9,
-      "rack": "B", "index": 4, "label": "9호차 B보관대 04칸" }
+    { "itemId": "BAG-01", "slotId": "14-D-04", "car": 14,
+      "rack": "D", "index": 4, "label": "14호차 D보관대 04칸" }
   ],
   "destPlans": [
-    { "destination": "대전", "order": 0, "carFrom": 4, "carTo": 6, "totalVolumeL": 375 }
+    { "destination": "대전", "order": 1, "carFrom": 9, "carTo": 9, "totalVolumeL": 135 }
   ],
   "attempts": [
     { "n": 1, "label": "llm-1", "ok": false, "violations": [ /* 위반 내역 */ ] },
@@ -237,9 +254,54 @@ AI 호출에 쓰는 전체 시간은 45초로 제한되고(회당 20초), 넘으
 
 | 구분 | 내용 |
 |---|---|
-| 제약 | 하차역 호차 구간 준수 · 특대형은 하단만 · 앞선 두 정차역은 A보관대 · 승객 전용 칸 침범 금지 · 보관대 잔여 칸 초과 금지 |
+| 제약 | 하차역 호차 구간 준수 · 특대형은 하단 칸만 · 승객 전용 칸에 특송 금지 · 보관대 잔여 칸 초과 금지 |
 | 목표 | ① 좌석-보관대 이동거리 최소화 ② 하차역별 집중 ③ 특정 호차 몰림 방지 ④ 자투리 공간 최소화 |
 | 출력 강제 | `output_config.format`(JSON Schema) + `rack` 값을 실제 보관대 목록 enum으로 제한 |
+
+### `POST /api/reassign`
+
+문제가 생겨 쓸 수 없게 된 칸의 화물을 어디로 옮길지 후보와 순위를 돌려줍니다.
+**여기서는 모델을 부르지 않습니다.** `/api/allocate`가 끝난 뒤 남아 있는 칸 중에서
+규격·상하단·승객 전용·중복 배정·하차역 구간을 코드가 걸러내고, 좌석 거리와 이동
+동선으로 순위를 매긴 뒤 근거 문장을 실제 계산값으로 조립합니다.
+
+```jsonc
+// 요청
+{ "blockedSlotId": "9-B-02", "allocations": [ /* 현재 배정 */ ], "passengers": [ /* … */ ] }
+
+// 응답
+{
+  "current": { "slotId": "9-B-02", "label": "9호차 B-02", "itemId": "A13" },
+  "recommendations": [
+    { "slotId": "9-B-04", "label": "9호차 B-04", "rank": 1,
+      "reason": "같은 객차 · 이동 2칸 · 특대형 하단 적재 가능" }
+  ],
+  "candidates": [ /* 전체 칸 + selectable/blockedReason */ ],
+  "source": "ranked"        // "ranked" | "none"
+}
+```
+
+### `POST /api/measure`
+
+사진에서 수하물 치수를 추정합니다(Claude vision). **현재 화면에서는 쓰지 않습니다** —
+P-03의 크기 인식은 실제 분석 없이 표준 규격을 보여주고 사용자가 고치는 방식이라,
+이 엔드포인트는 남겨만 둔 상태입니다. 키가 없거나 호출이 실패하면 24인치 캐리어
+표준 규격으로 폴백하고 `source`가 `"fallback"`이 됩니다.
+
+---
+
+## 5-1. 화면 흐름에서 알아둘 것
+
+| 화면 | 동작 |
+|---|---|
+| P-02 → P-03 | **사진 첨부가 등록의 첫 단계**입니다. 사진을 붙이면 바로 크기 인식으로 넘어갑니다. 인식 결과(가로·세로·높이)는 읽기 전용이 아니라 입력란이라 그 자리에서 고칠 수 있습니다. |
+| P-04 | 부피가 보관대 한 칸(105L)을 넘으면 판정 화면 대신 **규격 초과 결과**가 나오고 P-11 특송 안내로 이어집니다. |
+| S-04 | 상단 열차 도식에서 호차를 눌러 보관대를 고릅니다. 배정이 끝나면 호차별 적재율이 여유·보통·혼잡·거의 만석으로 칠해집니다. |
+| S-05 | 승객이 등록 때 붙인 사진을 그대로 보여줍니다. 배정 전이거나 빈 칸이면 값이 전부 `—`입니다. |
+| S-06 | **적재 준비 / 하역 예정** 두 탭. 하역 탭은 운행 노선에서 역을 눌러 그 역에서 내릴 목록을 봅니다. 역무원이 직접 다루는 **특송 화물만** 나옵니다. |
+| S-07 → S-08 | 현장 문제를 등록하면 그 칸을 막고 수동 재배정으로 이어집니다. 확정하면 적재 체크리스트와 위치도에 실제로 반영됩니다. |
+
+승객이 붙인 사진은 브라우저 세션 안에서만 오갑니다(`window.__jimkkok`). 서버에 저장하지 않습니다.
 
 ---
 
@@ -275,5 +337,16 @@ vercel --prod     # 프로덕션 배포
 - **`_legacy-cloudflare/`** 는 이전 Cloudflare Workers 스캐폴드와, Gemini 시절의 TypeScript 도메인
   모델(`superseded/`)을 옮겨둔 백업입니다. 현재 빌드에는 쓰이지 않고 `.gitignore`에 등록돼 있습니다.
   문제가 없다고 판단되면 통째로 지워도 됩니다.
+- **호차·보관대를 바꿀 때는 `lib/train.js` 한 곳만 고칩니다.** `LUGGAGE_CARS`와 `CAR_RACK`이
+  유일한 출처이고 나머지는 전부 여기서 파생됩니다. 다만 `lib/claude.js`의 프롬프트 문장,
+  `app/page.tsx`의 `RACK_CARS`, `app.js`의 `STOP_TIMES`는 별도로 맞춰줘야 합니다.
+- **CSS 클래스 이름이 겹치지 않는지 보세요.** 새로 만든 `.route-line`이 승차권 카드의
+  기존 `.route-line{height:35px}`에 눌려 역 이름과 시각이 겹친 적이 있습니다.
+  화면 전용 규칙에는 접두어를 붙이는 편이 안전합니다(`.trip-*`, `.krl-*`, `.ovr-*`).
+- **탭을 조건부로 갈아끼우지 마세요.** React가 같은 자리의 DOM 노드를 재사용하면서
+  `app.js`가 채운 내용 위에 자기 자식을 다시 써넣습니다. S-06은 두 패널을 항상 그려 두고
+  `hidden`으로만 감춥니다.
+- **아이콘은 전부 인라인 SVG입니다.** `▦`·`◬` 같은 글리프 문자는 Arial·Noto Sans KR에
+  자형이 없어 격자나 빈 네모로 깨집니다. 새 아이콘은 `app/page.tsx`의 `KRL_ICONS`에 추가하세요.
 - `app/layout.tsx`는 Next.js 시절 파일이라 SPA 빌드에 포함되지 않습니다. 타입 검사에서도 제외돼 있습니다
   (`tsconfig.json`의 `exclude`). 페이지 제목·favicon은 `index.html`이 담당합니다.
