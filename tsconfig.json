@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client", "node"],
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["src", "app", "lib", "api", "vite.config.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "_legacy-cloudflare",
+    // Next.js 전용 파일입니다. SPA에서는 index.html이 그 역할을 대신하므로
+    // 번들에 들어가지 않습니다. next 패키지가 없어 타입 검사에서 제외합니다.
+    "app/layout.tsx"
+  ]
+}
