@@ -591,53 +591,27 @@ bind("P-07 수하물 위치", () => {
   dropSlot("pax-pending");
   const { car, rack, cell } = readSlotId(a);
 
-  const eyebrow = $(".section-copy .eyebrow");
-  const h1 = $(".section-copy h1");
-  const desc = $(".section-copy p");
-  const isRackTab = Boolean($(".locker-map"));
+  // 호차 · 보관대 · 칸
+  setText($(".section-copy .eyebrow"), `${car}호차 ${rack} 수하물 보관대`);
+  // React가 소유한 h1을 innerHTML로 갈아끼우면 나중에 React가 자기 자식을 지우려다
+  // removeChild에서 터집니다. 칸 번호 텍스트만 바꿉니다.
+  setText($('[data-app="p07-cell"]'), cell);
+  setText($(".rack-label-photo > span"), cell);
 
-  if (isRackTab) {
-    // 적재 위치도: 호차 · 보관대 · 칸
-    setText(eyebrow, `${car}호차 ${rack} 수하물 보관대`);
-    setHTML(h1, `<strong>${esc(cell)}</strong> 칸에<br>수하물을 놓아주세요`);
-    setText($(".rack-label-photo > span"), cell);
-
-    // 사물함 격자: 배정된 보관대의 칸 번호로 다시 라벨링하고 내 칸을 표시
-    $$(".locker-cell").forEach((btn, i) => {
-      // 보관대 실제 칸 수보다 많은 격자는 감춥니다.
-      if (i >= SLOTS_PER_RACK) { hideEl(btn); return; }
-      btn.style.display = "";
-      const id = `${rack}-${String(i + 1).padStart(2, "0")}`;
-      setText(btn.querySelector("b"), id);
-      const mine = id === cell;
-      toggleClass(btn, "mine", mine);
-      toggleClass(btn, "neutral", !mine);
-      setText(btn.querySelector("span"), mine ? "내 수하물" : "");
-    });
-  } else {
-    // 객차 길찾기: 좌석 → 보관대 경로 문구
-    const distance = a.distanceM !== undefined ? `${a.distanceM}m` : "";
-    const dir = rack === "A" ? "앞쪽" : "뒤쪽";
-    setText(eyebrow, `${car}호차 내부`);
-    setHTML(h1, `${esc(a.seat ?? "12A")} 좌석에서<br>${esc(dir)}으로 ${esc(distance)} 이동하세요`);
-    setText(
-      desc,
-      car === (a.seatCar ?? 7)
-        ? `${rack} 보관대는 같은 호차 ${dir} 출입문 앞에 있어요.`
-        : `${a.seatCar ?? 7}호차 ${a.seat ?? "12A"}에서 ${car}호차 ${rack} 보관대까지 ${distance} 이동합니다.`,
-    );
-    const point = $(".rack-point");
-    if (point) {
-      setHTML(point, `${esc(rack)} 보관대<br><b>${esc(cell)}</b>`);
-    }
-    setText($(".path-arrow"), `↑ ${dir}으로 이동`);
-    // 좌석 격자에서 내 좌석을 표시합니다.
-    const mySeat = a.seat ?? "12A";
-    $$(".seat-grid span").forEach((el) => toggleClass(el, "my-seat", el.textContent === mySeat));
-  }
+  // 사물함 격자: 배정된 보관대의 칸 번호로 다시 라벨링하고 내 칸을 표시
+  $$(".locker-cell").forEach((btn, i) => {
+    // 보관대 실제 칸 수보다 많은 격자는 감춥니다.
+    if (i >= SLOTS_PER_RACK) { hideEl(btn); return; }
+    btn.style.display = "";
+    const id = `${rack}-${String(i + 1).padStart(2, "0")}`;
+    setText(btn.querySelector("b"), id);
+    const mine = id === cell;
+    toggleClass(btn, "mine", mine);
+    toggleClass(btn, "neutral", !mine);
+    setText(btn.querySelector("span"), mine ? "내 수하물" : "");
+  });
 });
 
-// ── P-08 QR 확인증 ──
 bind("P-08 QR", () => {
   if (screenId() !== "P-08") return;
   const a = myAllocation();
@@ -652,7 +626,6 @@ bind("P-08 QR", () => {
   if (code) {
     setAttr(code, "aria-label", payload);
     setAttr(code, "title", payload);
-    setHTML(code.querySelector("span"), qrArt(payload));
   }
 
   setText($(".qr-status"), state.confirmed ? "등록 완료 · 배정 확정" : "등록 완료 · 역무원 확정 대기");
