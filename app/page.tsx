@@ -816,6 +816,36 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
       setReassignBusy(false);
     }
   };
+
+  /**
+   * 고른 칸으로 실제 배정을 옮깁니다.
+   *
+   * 적재 체크리스트(S-06)와 위치도(S-04)는 app.js가 state.plan을 보고 그리므로,
+   * 그 배열을 직접 고쳐야 화면에 반영됩니다. schedule()로 다시 칠하게 합니다.
+   */
+  const applyMove = () => {
+    const itemId = reassign?.current?.itemId;
+    const app = (window as unknown as {
+      app?: { state?: { plan?: { allocations?: Record<string, unknown>[] } }; schedule?: () => void };
+    }).app;
+    const list = app?.state?.plan?.allocations;
+
+    if (itemId && list) {
+      const [car, rack, idx] = pickedSlot.split("-");
+      const target = list.find((a) => a.itemId === itemId);
+      if (target) {
+        target.slotId = pickedSlot;
+        target.car = Number(car);
+        target.rack = rack;
+        target.index = Number(idx);
+        target.label = `${car}호차 ${rack}보관대 ${idx}칸`;
+        // 옮긴 위치는 좌석 거리를 다시 계산해야 맞습니다. 모르면 지웁니다.
+        delete target.distanceM;
+        app?.schedule?.();
+      }
+    }
+    setMoved(true);
+  };
   const [scanStage, setScanStage] = useState(0);
 
   if (index === 0) return <div className="phone-screen staff"><PhoneHeader title="오늘의 적재 업무" staff/><div className="screen-scroll"><div className="work-date"><span>8월 13일 · 서울역</span><button>필터<KrlIcon name="chevronDown"/></button></div><div className="summary-strip"><div><b>3</b><span>담당 열차</span></div><div><b>1</b><span>검토 필요</span></div><div><b>8</b><span>특송 건수</span></div></div><div className="section-title"><h3>지금 확인할 열차</h3><span>출발 순</span></div><div className="staff-train-card urgent"><div className="card-status"><span className="pill red">검토 필요</span><small>출발 24분 전</small></div><h2>KTX 123 · 서울 → 부산</h2><p>17:00 출발 · 8번 승강장</p><div className="staff-metrics"><span>승객 수하물 <b>34개</b></span><span>특송 <b>8건</b></span><span>확인 필요 <b className="red-text">1건</b></span></div><button className="primary" onClick={()=>go(1)}>운영 현황 보기</button></div><div className="staff-train-card"><div className="card-status"><span className="pill orange">특송 준비</span><small>출발 54분 전</small></div><h2>KTX 231 · 서울 → 광주송정</h2><p>17:30 출발 · 승강장 미정</p></div></div><BottomNav staff active="home"/></div>;
@@ -905,7 +935,7 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
       <div className="sticky-action">
         {moved
           ? <button className="primary dark" onClick={()=>go(5)}>적재 체크리스트로</button>
-          : <button className="primary dark" disabled={!pickedSlot} style={!pickedSlot ? { opacity: .4 } : undefined} onClick={()=>setMoved(true)}>선택한 위치로 변경</button>}
+          : <button className="primary dark" disabled={!pickedSlot} style={!pickedSlot ? { opacity: .4 } : undefined} onClick={applyMove}>선택한 위치로 변경</button>}
       </div>
     </div>
   );
