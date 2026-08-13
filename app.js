@@ -22,6 +22,9 @@ const BOX_8_L = 62;
 /** 정차역 하역 경고 기준 (초) */
 const DWELL_WARN_SECONDS = 180;
 
+/** 정차역 도착 시각. page.tsx의 TICKET_STOPS와 같아야 합니다. */
+const STOP_TIMES = { "광교": "17:23", "대전": "17:58", "동대구": "18:47", "부산": "19:41" };
+
 // ─────────────────────────────────────────────────────────────
 // 조회·주입 유틸
 // ─────────────────────────────────────────────────────────────
@@ -139,6 +142,10 @@ function esc(value) {
 const state = {
   /** 적재 체크리스트에서 체크된 itemId */
   checked: new Set(),
+  /** 하역 체크리스트에서 체크된 itemId */
+  unloadChecked: new Set(),
+  /** 하역 예정 탭에서 고른 정차역 */
+  unloadStation: null,
   /** S-03 배정 목록 필터: all | bad */
   reviewFilter: "all",
   /** 요청 세대. 목록이 바뀌면 올려서, 날아가던 응답을 버립니다. */
@@ -1179,14 +1186,25 @@ bind("S-05 칸 상세", () => {
   setText(byLabel("등록번호"), a.itemId);
 });
 
-bind("S-06 적재 체크리스트", () => {
+bind("S-06 특송 작업", () => {
   if (screenId() !== "S-06") return;
   if (!staffGate()) return;
 
-  // 승객 수하물과 특송 화물을 모두 싣습니다. 칸 순서대로 정렬해 동선을 맞춥니다.
-  const rows = [...state.plan.allocations].sort(
-    (a, b) => a.car - b.car || a.index - b.index,
-  );
+  const onUnloadTab = Boolean($('[data-app="unload-panel"]'));
+  if (onUnloadTab) paintUnload();
+  else paintLoad();
+});
+
+/**
+ * 적재 준비 — 호차별 그룹으로 실을 목록을 그립니다.
+ *
+ * 이 화면은 역무원이 직접 실고 내리는 특송 화물만 다룹니다.
+ * 승객 수하물은 승객이 직접 넣으므로 목록에서 제외합니다.
+ */
+function paintLoad() {
+  const rows = state.plan.allocations
+    .filter((a) => a.kind === "freight")
+    .sort((a, b) => a.car - b.car || a.index - b.index);
   const ids = rows.map((a) => a.itemId);
 
   // 배정이 바뀌면 사라진 항목의 체크는 버립니다.
@@ -1206,12 +1224,6 @@ bind("S-06 적재 체크리스트", () => {
       : "AI 배치 결과입니다. 실은 항목을 체크하세요.",
   );
 
-  // 원본 마크업은 그룹 3개·행 5개뿐이라 항목이 잘립니다.
-  // 원본은 감추고 같은 클래스로 전체 목록을 새로 그립니다.
-  $$(".prep-group").forEach((g) => {
-    if (!g.dataset.app) hideEl(g);
-  });
-
   const groups = new Map();
   for (const a of rows) {
     if (!groups.has(a.car)) groups.set(a.car, []);
@@ -1222,48 +1234,136 @@ bind("S-06 적재 체크리스트", () => {
     .sort((x, y) => x[0] - y[0])
     .map(([car, list]) => {
       const rack = CAR_RACK[car] || list[0].rack;
-      const items = list
-        .map((a) => {
-          const cell = `${a.rack}-${String(a.index).padStart(2, "0")}`;
-          const on = state.checked.has(a.itemId);
-          const who =
-            a.kind === "freight"
-              ? `특송 #${esc(a.itemId)}`
-              : `승객 ${esc(a.ticketKey || a.itemId)} · ${a.seatCar}호차 ${esc(a.seat || "")}`;
-          const note =
-            a.kind === "freight"
-              ? `${esc(a.destination)} 하역 · ${a.volumeL}L`
-              : `${esc(a.destination)} 하차 · ${a.volumeL}L · 좌석에서 ${a.distanceM ?? "-"}m`;
-          return (
-            `<button data-item="${esc(a.itemId)}"><i class="${on ? "checked" : ""}">${on ? "✓" : ""}</i>` +
-            `<span><b>${who} → ${esc(cell)}</b><small>${note}</small></span><em>›</em></button>`
-          );
-        })
-        .join("");
+      const items = list.map((a) => rowHTML(a, state.checked.has(a.itemId), "하역")).join("");
       return (
-        `<div class="prep-group" data-app="prep"><h3>${car}호차 ${esc(rack)}보관대 ` +
+        `<div class="prep-group"><h3>${car}호차 ${esc(rack)}보관대 ` +
         `<span>${list.length}건</span></h3>${items}</div>`
       );
     })
     .join("");
 
-  const box = slot("s06-groups");
+  const box = $('[data-app="load-panel"]');
   if (!box) return;
   setHTML(box, html || '<div class="notice"><b>적재할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
+  delegateCheck(box, state.checked);
+}
 
-  // 목록은 매 렌더마다 새로 그려지므로 컨테이너에 한 번만 위임 바인딩합니다.
-  if (!box.dataset.appBound) {
-    box.dataset.appBound = "1";
+/** 한 줄짜리 체크 항목 */
+function rowHTML(a, on, verb) {
+  const cell = `${a.rack}-${String(a.index).padStart(2, "0")}`;
+  const who =
+    a.kind === "freight"
+      ? `특송 #${esc(a.itemId)}`
+      : `승객 ${esc(a.ticketKey || a.itemId)} · ${a.seatCar}호차 ${esc(a.seat || "")}`;
+  const note =
+    a.kind === "freight"
+      ? `${esc(a.destination)} ${verb} · ${a.volumeL}L`
+      : `${esc(a.destination)} 하차 · ${a.volumeL}L` +
+        (a.distanceM !== undefined ? ` · 좌석에서 ${a.distanceM}m` : "");
+  return (
+    `<button data-item="${esc(a.itemId)}"><i class="${on ? "checked" : ""}">${on ? "✓" : ""}</i>` +
+    `<span><b>${who} → ${esc(cell)}</b><small>${note}</small></span><em>›</em></button>`
+  );
+}
+
+/** 목록은 매 렌더마다 새로 그려지므로 컨테이너에 한 번만 위임 바인딩합니다. */
+function delegateCheck(box, set) {
+  if (box.dataset.appBound) return;
+  box.dataset.appBound = "1";
+  box.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-item]");
+    if (!btn) return;
+    const id = btn.dataset.item;
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    schedule();
+  });
+}
+
+/**
+ * 하역 예정 — 운행 노선에서 역을 고르면 그 역에서 내릴 목록을 보여줍니다.
+ * 데이터는 배정 응답의 unloadPlan을 그대로 씁니다.
+ */
+function paintUnload() {
+  const box = $('[data-app="unload-panel"]');
+  if (!box) return;
+
+  const plans = (state.plan.unloadPlan ?? []).filter((p) => p.freightCount > 0);
+  if (plans.length === 0) {
+    setHTML(box, '<div class="notice"><b>하역할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
+    return;
+  }
+
+  // 처음 들어오면 첫 정차역을 고릅니다.
+  if (!plans.some((p) => p.station === state.unloadStation)) {
+    state.unloadStation = plans[0].station;
+  }
+  const picked = plans.find((p) => p.station === state.unloadStation);
+
+  const stops =
+    `<button class="trip-stop origin" disabled><i></i><b>서울</b><small>출발</small></button>` +
+    plans
+      .map(
+        (p) =>
+          `<button class="trip-stop ${p.station === picked.station ? "on" : ""}" data-station="${esc(p.station)}">` +
+          `<i></i><b>${esc(p.station)}</b><small>${STOP_TIMES[p.station] ?? "-"}</small></button>`,
+      )
+      .join("");
+
+  const freight = picked.items.filter((i) => i.kind === "freight");
+  const ids = freight.map((i) => i.itemId);
+  for (const id of [...state.unloadChecked]) if (!ids.includes(id)) state.unloadChecked.delete(id);
+  const done = ids.filter((id) => state.unloadChecked.has(id)).length;
+  const pct = ids.length ? Math.round((done / ids.length) * 100) : 0;
+
+  // unloadPlan 항목에는 좌석 정보가 없습니다. 배정 결과에서 채워 넣습니다.
+  const allocById = new Map(state.plan.allocations.map((a) => [a.itemId, a]));
+  const rows = freight
+    .map((i) =>
+      rowHTML(
+        { ...(allocById.get(i.itemId) ?? {}), ...i, destination: picked.station },
+        state.unloadChecked.has(i.itemId),
+        "하역",
+      ),
+    )
+    .join("");
+
+  setHTML(
+    box,
+    `<div class="section-title"><h3>운행 노선</h3><span class="pill blue">${plans.length}개 역</span></div>` +
+      `<div class="trip-route">${stops}</div>` +
+      `<p class="trip-hint">하역할 역을 선택해 주세요.</p>` +
+      `<div class="unload-card">` +
+      `<div class="unload-top"><h2>${esc(picked.station)} 하역 예정</h2><span class="pill blue">${freight.length}건</span></div>` +
+      `<p>도착 ${STOP_TIMES[picked.station] ?? "-"} · 예상 작업 ${picked.estimatedSeconds}초` +
+      (picked.withinDwellLimit ? "" : ` · 정차 시간 초과 주의`) +
+      `</p>` +
+      `<div class="unload-progress"><span>확인 ${done} / ${ids.length}</span><div class="progress"><i></i></div></div>` +
+      `</div>` +
+      `<div class="unload-tally">` +
+      `<span class="on">특송 화물 ${freight.length}</span>` +
+      `</div>` +
+      `<div class="prep-group">${rows}</div>`,
+  );
+
+  // 인라인 style을 HTML 문자열에 넣으면 브라우저가 정규화해 setHTML 비교가 영원히
+  // 어긋납니다(무한 리페인트). 폭은 그려진 뒤에 직접 지정합니다.
+  const ubar = $(".unload-progress .progress i", box);
+  if (ubar) ubar.style.width = `${pct}%`;
+
+  setText($('[data-app="work-cta"]'), `${picked.station} 하역 ${freight.length}건 확인`);
+
+  delegateCheck(box, state.unloadChecked);
+  if (!box.dataset.appStation) {
+    box.dataset.appStation = "1";
     box.addEventListener("click", (event) => {
-      const btn = event.target.closest("button[data-item]");
+      const btn = event.target.closest("button[data-station]");
       if (!btn) return;
-      const id = btn.dataset.item;
-      if (state.checked.has(id)) state.checked.delete(id);
-      else state.checked.add(id);
+      state.unloadStation = btn.dataset.station;
       schedule();
     });
   }
-});
+}
 
 // ═════════════════════════════════════════════════════════════
 // 시작

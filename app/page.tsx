@@ -216,13 +216,13 @@ function Icon({ name }: { name: IconName }) {
   return <span className="icon" aria-hidden="true"><KrlIcon name={name}/></span>;
 }
 
-function PhoneHeader({ title, back, staff = false, korail = false }: { title: string; back?: () => void; staff?: boolean; korail?: boolean }) {
+function PhoneHeader({ title, sub, back, staff = false, korail = false }: { title: string; sub?: string; back?: () => void; staff?: boolean; korail?: boolean }) {
   return (
     <>
       <div className={`phone-status ${korail ? "korail-status" : ""}`}><span>9:41</span><span className="status-icons"><KrlIcon name="signal"/><KrlIcon name="wifi"/><KrlIcon name="battery"/></span></div>
-      <header className={`phone-header ${staff ? "staff-header" : ""} ${korail ? "korail-header" : ""}`}>
+      <header className={`phone-header ${staff ? "staff-header" : ""} ${korail ? "korail-header" : ""} ${sub ? "with-sub" : ""}`}>
         {back ? <button className="icon-button" onClick={back} aria-label="이전 화면">‹</button> : <span className="korail-mini">KORAIL</span>}
-        <strong>{title}</strong>
+        <strong>{title}{sub && <small>{sub}</small>}</strong>
         <button className="icon-button" aria-label="더보기">•••</button>
       </header>
     </>
@@ -745,7 +745,7 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
   const [car, setCar] = useState("7호차");
   const [selectedCell, setSelectedCell] = useState("A-03");
   const [confirmed, setConfirmed] = useState(false);
-  const [prepared, setPrepared] = useState(["A13","A14","C21","B07"]);
+  const [workTab, setWorkTab] = useState<"load"|"unload">("load");
   // S-07 예외 처리 — 발생 위치는 호차·칸 두 드롭다운으로 고릅니다.
   const [exCar, setExCar] = useState("9호차");
   const [exCell, setExCell] = useState("B-02");
@@ -858,7 +858,27 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
 
   if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={reportIssue}>현장 문제 등록</button></div></div>;
 
-  if (index === 5) return <div className="phone-screen staff"><PhoneHeader title="적재 체크리스트" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="progress-card"><div><span>적재 진행률</span><b>{prepared.length} / 7건</b></div><div className="progress"><i style={{width:`${prepared.length/7*100}%`}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>{[["9호차",[["A13","B-03","대전"],["A14","B-04","대전"]]],["12호차",[["C21","C-04","동대구"]]],["14호차",[["B07","D-04","부산"],["B08","D-05","부산"]]]].map(([c,rows])=><div className="prep-group" key={c as string}><h3>{c as string} <span>{(rows as string[][]).length}건</span></h3>{(rows as string[][]).map(([id,pos,dest])=><button key={id} onClick={()=>setPrepared(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])}><i className={prepared.includes(id)?"checked":""}>{prepared.includes(id)?"✓":""}</i><span><b>#{id} → {pos}</b><small>{dest} 하역</small></span><em>›</em></button>)}</div>)}</div><div className="sticky-action"><button className="primary dark" onClick={()=>go(1)}>적재 완료 처리</button></div></div>;
+  // S-06 특송 작업 — 적재 준비 / 하역 예정 두 섹션. 값은 app.js가 배정 결과로 채웁니다.
+  if (index === 5) return (
+    <div className="phone-screen staff">
+      <PhoneHeader title="특송 작업" back={()=>go(1)} staff/>
+      <div className="tabbar work-tabs">
+        <button className={workTab === "load" ? "active" : ""} onClick={()=>setWorkTab("load")}>적재 준비</button>
+        <button className={workTab === "unload" ? "active" : ""} onClick={()=>setWorkTab("unload")}>하역 예정</button>
+      </div>
+      <div className="screen-scroll bottom-space">
+        {workTab === "load" ? (
+          <>
+            <div className="progress-card"><div><span>적재 진행률</span><b>0 / 0건</b></div><div className="progress"><i style={{width:"0%"}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>
+            <div data-app="load-panel"/>
+          </>
+        ) : <div data-app="unload-panel"/>}
+      </div>
+      <div className="sticky-action">
+        <button className="primary dark" onClick={()=>go(1)} data-app="work-cta">{workTab === "load" ? "적재 완료 처리" : "하역 위치 한눈에 보기"}</button>
+      </div>
+    </div>
+  );
 
   // S-07 예외 처리 — 현장 문제 등록
   // 등록 완료 화면은 S-07 안의 상태입니다. S-08로 넘어간 뒤에는 걸리면 안 됩니다.

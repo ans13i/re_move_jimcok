@@ -91,6 +91,31 @@
 .ex-hint{font-size:8.5px;color:#8a98a1;margin:8px 2px 0}
 .staff .screen-scroll textarea{height:74px;font-size:10px;padding:11px}
 
+/* S-06 특송 작업 — 적재 준비 / 하역 예정 */
+.work-tabs{height:42px;background:#fff;flex-shrink:0}
+.trip-route{display:flex;align-items:flex-start;gap:2px;background:#fff;border:1px solid #e1e8ed;border-radius:13px;padding:14px 10px 12px;position:relative}
+.trip-stop{flex:1;min-width:0;border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:7px;padding:0;position:relative}
+/* 역과 역 사이를 잇는 선 — 아이콘 중심 높이에 맞춥니다. */
+.trip-stop:not(:last-child):after{content:"";position:absolute;left:50%;top:6px;width:100%;height:2px;background:#c4d3e2}
+.trip-stop i{width:13px;height:13px;border-radius:50%;border:2.5px solid #c4d3e2;background:#fff;z-index:1}
+.trip-stop.origin i{background:#c4d3e2}
+.trip-stop.on i{border-color:#1464ca;background:#1464ca;box-shadow:0 0 0 3px #1464ca25}
+.trip-stop b{font-size:10px;color:#4d5f70;white-space:nowrap}
+.trip-stop.on b{background:#1464ca;color:#fff;border-radius:6px;padding:2px 7px}
+.trip-stop small{font-size:8px;color:#8a98a1;font-variant-numeric:tabular-nums}
+.trip-stop.on small{color:#1464ca;font-weight:800}
+.trip-hint{text-align:center;font-size:8.5px;color:#8a98a1;margin:9px 0 0}
+.unload-card{background:#eef5ff;border:1px solid #d3e4fb;border-radius:13px;padding:14px;margin-top:13px}
+.unload-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.unload-top h2{font-size:17px;margin:0;letter-spacing:-.4px}
+.unload-card>p{font-size:9px;color:#5f7183;margin:6px 0 0}
+.unload-progress{margin-top:11px}.unload-progress span{font-size:9px;font-weight:800;color:#16283c}
+.unload-progress .progress{background:#ffffffcc;margin:6px 0 0}.unload-progress .progress i{background:#1464ca}
+.unload-tally{display:flex;gap:6px;margin:12px 0 2px;overflow-x:auto;scrollbar-width:none}
+.unload-tally::-webkit-scrollbar{display:none}
+.unload-tally span{border:1px solid #dde5ea;background:#fff;color:#68788a;border-radius:16px;padding:6px 10px;font-size:8.5px;font-weight:800;white-space:nowrap}
+.unload-tally span.on{background:#1464ca;border-color:#1464ca;color:#fff}
+
 /* S-08 수동 재배정 */
 .ra-current{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff2f2;border:1px solid #f2ced1;border-radius:14px;padding:14px}
 .ra-current span{display:block;font-size:9px;color:#a57174;margin-bottom:5px}.ra-current b{font-size:19px;color:#16283c;letter-spacing:-.4px}
