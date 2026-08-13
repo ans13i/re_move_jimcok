@@ -166,7 +166,7 @@ function tripInfo(dest: string) {
 
 const staffScreens = [
   ["S-01", "담당 열차 홈"], ["S-02", "열차 운영 요약"], ["S-03", "AI 배정안 검토"],
-  ["S-04", "전체 적재 위치도"], ["S-05", "칸 상세"], ["S-06", "적재 체크리스트"],
+  ["S-04", "전체 적재 위치도"], ["S-05", "칸 상세"], ["S-06", "특송 작업 체크리스트"],
   ["S-07", "예외 처리"], ["S-08", "수동 재배정"],
 ] as const;
 
@@ -833,18 +833,20 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
   // S-06 특송 작업 — 적재 준비 / 하역 예정 두 섹션. 값은 app.js가 배정 결과로 채웁니다.
   if (index === 5) return (
     <div className="phone-screen staff">
-      <PhoneHeader title="특송 작업" back={()=>go(1)} staff/>
+      <PhoneHeader title="특송 작업 체크리스트" back={()=>go(1)} staff/>
       <div className="tabbar work-tabs">
         <button className={workTab === "load" ? "active" : ""} onClick={()=>setWorkTab("load")}>적재 준비</button>
         <button className={workTab === "unload" ? "active" : ""} onClick={()=>setWorkTab("unload")}>하역 예정</button>
       </div>
       <div className="screen-scroll bottom-space">
-        {workTab === "load" ? (
-          <>
-            <div className="progress-card"><div><span>적재 진행률</span><b>0 / 0건</b></div><div className="progress"><i style={{width:"0%"}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>
-            <div data-app="load-panel"/>
-          </>
-        ) : <div data-app="unload-panel"/>}
+        {/*
+          두 패널을 항상 그려 둡니다. 조건부로 갈아끼우면 React가 .progress-card
+          노드를 재사용해 하역 패널로 바꾸고, 나중에 자기 자식("0 / 6건")을 그
+          자리에 다시 써넣어 노선 첫 줄을 덮어씁니다.
+        */}
+        <div className="progress-card" hidden={workTab !== "load"}><div><span>적재 진행률</span><b>0 / 0건</b></div><div className="progress"><i></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>
+        <div data-app="load-panel" hidden={workTab !== "load"}/>
+        <div data-app="unload-panel" hidden={workTab !== "unload"}/>
       </div>
       <div className="sticky-action">
         <button className="primary dark" onClick={()=>go(1)} data-app="work-cta">{workTab === "load" ? "적재 완료 처리" : "하역 위치 한눈에 보기"}</button>

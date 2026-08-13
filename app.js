@@ -58,6 +58,21 @@ function setHTML(el, html) {
   return true;
 }
 
+/**
+ * innerHTML을 갈아끼우되, 비교는 브라우저가 정규화한 innerHTML이 아니라 우리가
+ * 마지막에 써넣은 문자열과 합니다.
+ *
+ * setHTML은 그려진 뒤 스타일·속성을 하나라도 손대면 다음 패스에서 문자열이
+ * 어긋나 다시 그립니다. 그러면 매 프레임 DOM이 새로 만들어져 mousedown과
+ * mouseup 사이에 요소가 사라지고, 실제 클릭이 전혀 먹지 않습니다.
+ */
+function paintHTML(el, html) {
+  if (!el || el.__appHtml === html) return false;
+  el.__appHtml = html;
+  el.innerHTML = html;
+  return true;
+}
+
 function setAttr(el, name, value) {
   if (!el || value === null || value === undefined) return false;
   if (el.getAttribute(name) === String(value)) return false;
@@ -1209,8 +1224,9 @@ bind("S-06 특송 작업", () => {
   if (screenId() !== "S-06") return;
   if (!staffGate()) return;
 
-  const onUnloadTab = Boolean($('[data-app="unload-panel"]'));
-  if (onUnloadTab) paintUnload();
+  // 두 패널이 항상 있으므로 hidden으로 어느 쪽이 보이는지 가립니다.
+  const unload = $('[data-app="unload-panel"]');
+  if (unload && !unload.hidden) paintUnload();
   else paintLoad();
 });
 
@@ -1263,7 +1279,7 @@ function paintLoad() {
 
   const box = $('[data-app="load-panel"]');
   if (!box) return;
-  setHTML(box, html || '<div class="notice"><b>적재할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
+  paintHTML(box, html || '<div class="notice"><b>적재할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
   delegateCheck(box, state.checked);
 }
 
@@ -1309,7 +1325,7 @@ function paintUnload() {
 
   const plans = (state.plan.unloadPlan ?? []).filter((p) => p.freightCount > 0);
   if (plans.length === 0) {
-    setHTML(box, '<div class="notice"><b>하역할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
+    paintHTML(box, '<div class="notice"><b>하역할 항목이 없습니다</b><p>배정 결과가 비어 있어요.</p></div>');
     return;
   }
 
@@ -1319,13 +1335,15 @@ function paintUnload() {
   }
   const picked = plans.find((p) => p.station === state.unloadStation);
 
+  // 역마다 한 줄짜리 버튼입니다. 손가락으로 누르기 쉬우라고 가로로 꽉 채웁니다.
   const stops =
-    `<button class="trip-stop origin" disabled><i></i><b>서울</b><small>출발</small></button>` +
+    `<span class="trip-stop origin"><i></i><b>서울</b><small>출발</small></span>` +
     plans
       .map(
         (p) =>
           `<button class="trip-stop ${p.station === picked.station ? "on" : ""}" data-station="${esc(p.station)}">` +
-          `<i></i><b>${esc(p.station)}</b><small>${STOP_TIMES[p.station] ?? "-"}</small></button>`,
+          `<i></i><b>${esc(p.station)}</b><small>${STOP_TIMES[p.station] ?? "-"}</small>` +
+          `<em>${p.freightCount}건</em><u>›</u></button>`,
       )
       .join("");
 
@@ -1347,7 +1365,7 @@ function paintUnload() {
     )
     .join("");
 
-  setHTML(
+  paintHTML(
     box,
     `<div class="section-title"><h3>운행 노선</h3><span class="pill blue">${plans.length}개 역</span></div>` +
       `<div class="trip-route">${stops}</div>` +

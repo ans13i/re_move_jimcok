@@ -109,17 +109,20 @@
 
 /* S-06 특송 작업 — 적재 준비 / 하역 예정 */
 .work-tabs{height:42px;background:#fff;flex-shrink:0}
-.trip-route{display:flex;align-items:flex-start;gap:2px;background:#fff;border:1px solid #e1e8ed;border-radius:13px;padding:14px 10px 12px;position:relative}
-.trip-stop{flex:1;min-width:0;border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:7px;padding:0;position:relative}
-/* 역과 역 사이를 잇는 선 — 아이콘 중심 높이에 맞춥니다. */
-.trip-stop:not(:last-child):after{content:"";position:absolute;left:50%;top:6px;width:100%;height:2px;background:#c4d3e2}
-.trip-stop i{width:13px;height:13px;border-radius:50%;border:2.5px solid #c4d3e2;background:#fff;z-index:1}
-.trip-stop.origin i{background:#c4d3e2}
-.trip-stop.on i{border-color:#1464ca;background:#1464ca;box-shadow:0 0 0 3px #1464ca25}
-.trip-stop b{font-size:10px;color:#4d5f70;white-space:nowrap}
-.trip-stop.on b{background:#1464ca;color:#fff;border-radius:6px;padding:2px 7px}
-.trip-stop small{font-size:8px;color:#8a98a1;font-variant-numeric:tabular-nums}
-.trip-stop.on small{color:#1464ca;font-weight:800}
+.trip-route{background:#fff;border:1px solid #e1e8ed;border-radius:13px;padding:5px 4px;display:flex;flex-direction:column}
+/* 역마다 한 줄. 세로 연결선으로 노선처럼 잇고, 줄 전체가 누르는 영역입니다. */
+.trip-stop{position:relative;display:grid;grid-template-columns:26px 1fr auto auto 10px;align-items:center;gap:8px;border:0;background:transparent;border-radius:10px;padding:10px 9px;text-align:left;min-height:44px;width:100%}
+.trip-stop:not(:last-child):before{content:"";position:absolute;left:21px;top:calc(50% + 6px);bottom:-2px;width:2px;background:#c4d3e2;pointer-events:none}
+.trip-stop i{width:11px;height:11px;border-radius:50%;border:2.5px solid #c4d3e2;background:#fff;justify-self:center;z-index:1}
+.trip-stop b{font-size:12px;color:#3d5062}
+.trip-stop small{font-size:9.5px;color:#8a98a1;font-variant-numeric:tabular-nums;justify-self:end}
+.trip-stop em{font-style:normal;font-size:8.5px;font-weight:800;color:#68788a;background:#eef2f5;border-radius:12px;padding:4px 8px;white-space:nowrap}
+.trip-stop u{text-decoration:none;font-size:13px;color:#b3bfc9;justify-self:end}
+.trip-stop.origin{color:#9aa7b1}.trip-stop.origin i{background:#c4d3e2}.trip-stop.origin b{color:#8a98a1;font-size:11px}
+.trip-stop.on{background:#eef5ff}
+.trip-stop.on i{border-color:#1464ca;background:#1464ca;box-shadow:0 0 0 3px #1464ca22}
+.trip-stop.on b{color:#1256b0;font-weight:800}.trip-stop.on small{color:#1464ca;font-weight:800}
+.trip-stop.on em{background:#1464ca;color:#fff}.trip-stop.on u{color:#1464ca}
 .trip-hint{text-align:center;font-size:8.5px;color:#8a98a1;margin:9px 0 0}
 .unload-card{background:#eef5ff;border:1px solid #d3e4fb;border-radius:13px;padding:14px;margin-top:13px}
 .unload-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
