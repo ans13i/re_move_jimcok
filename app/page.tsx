@@ -69,7 +69,7 @@ const AI_SCAN_RESULT: Dims = { w: "45", h: "30", d: "67" };
 type ScanResult = { widthCm: number; depthCm: number; heightCm: number; note: string; source: "llm" | "fallback" };
 
 /** 사진 분석을 기다리는 한도 (ms). 넘으면 표준 규격으로 넘어갑니다. */
-const MEASURE_TIMEOUT_MS = 8_000;
+const MEASURE_TIMEOUT_MS = 12_000;
 
 /**
  * 사진을 긴 변 768px·JPEG로 줄여 data URL로 만듭니다.
@@ -463,6 +463,7 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [scan, setScan] = useState<"idle"|"analyzing"|"done">("idle");
   const [scanNote, setScanNote] = useState("");
+  const [scanOk, setScanOk] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const openPicker = () => fileRef.current?.click();
@@ -482,6 +483,7 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
     setPhotoUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setScan("analyzing");
     setScanNote("");
+    setScanOk(false);
     go(3);
 
     let r: ScanResult | null = null;
@@ -507,7 +509,12 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
       ? { w: String(r.widthCm), h: String(r.depthCm), d: String(r.heightCm) }
       : { ...AI_SCAN_RESULT };
 
-    setScanNote(r?.source === "llm" && r.note ? r.note : "");
+    setScanNote(
+      r?.source === "llm" && r.note
+        ? r.note
+        : "사진 분석을 쓸 수 없어 24인치 캠리어 표준 규격을 넣었습니다. 실제 크기를 직접 입력해 주세요.",
+    );
+    setScanOk(r?.source === "llm");
     setSize("custom");
     setDims(() => measured);
     setScan("done");
@@ -614,7 +621,7 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
               </label>
             ))}
           </div>
-          {scanNote && <p className="dim-note-ai"><KrlIcon name="sparkle"/>{scanNote}</p>}
+          {scanNote && <p className={scanOk ? "dim-note-ai" : "dim-note-ai warn"}><KrlIcon name={scanOk ? "sparkle" : "info"}/>{scanNote}</p>}
           <p className="dim-hint"><KrlIcon name="info"/>인식된 값이 실제와 다르면 직접 입력해 주세요.</p>
 
           <h3 className="reg-question">예상 무게</h3>
