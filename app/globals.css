@@ -53,6 +53,22 @@
 .scan-retake{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:5px;border:0;background:#fffffff2;color:#2a3d4d;border-radius:16px;padding:7px 11px;font-size:9px;font-weight:800;box-shadow:0 2px 8px #16283c26}.scan-retake svg{width:12px;height:12px}
 .scan-empty{width:100%;margin-top:12px;border:1.6px dashed #a9bfd4;background:#f7fafd;border-radius:14px;padding:34px 16px;display:flex;flex-direction:column;align-items:center;gap:7px;color:#5b7488}
 .scan-empty svg{width:34px;height:34px;color:#1464ca}.scan-empty b{font-size:11px;color:#16283c}.scan-empty small{font-size:9px;color:#7b8993}
+/* 인식 결과는 읽기 전용이 아닙니다 — 값이 틀리면 그 자리에서 고칩니다. */
+.dim-edit{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:11px}
+.dim-edit label{position:relative;display:flex;flex-direction:column;gap:5px;border:1px solid #dfe6ec;background:#fff;border-radius:11px;padding:9px 4px 10px;text-align:center}
+.dim-edit span{font-size:9px;color:#75838e}
+.dim-edit input{width:100%;border:0;background:transparent;font-size:19px;font-weight:800;color:#16283c;text-align:center;letter-spacing:-.5px;padding:0 12px 0 0;-moz-appearance:textfield}
+.dim-edit input::-webkit-outer-spin-button,.dim-edit input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.dim-edit input:focus{outline:none}
+.dim-edit label:focus-within{border-color:#1464ca;background:#f7fbff}
+.dim-edit em{position:absolute;right:9px;bottom:14px;font-style:normal;font-size:9px;color:#5b6d7d}
+.dim-hint{display:flex;gap:6px;align-items:flex-start;font-size:8.5px;color:#1464ca;font-weight:700;line-height:1.5;margin:9px 2px 0;word-break:keep-all}
+.dim-hint svg{width:12px;height:12px;flex:none;margin-top:1px}
+/* S-05 칸 상세 — 승객이 등록한 사진 */
+.luggage-photo{position:relative;overflow:hidden}
+.luggage-photo img[data-app]{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.luggage-photo img[data-app]~span{position:relative;z-index:1;background:#fffffff2}
+
 .scan-result-head{display:flex;gap:10px;align-items:center;margin-top:16px}.scan-result-icon{color:#1464ca;display:flex;flex:none}.scan-result-icon svg{width:24px;height:24px}.scan-result-head b{font-size:12px;display:block}.scan-result-head small{font-size:9px;color:#75838e;display:block;margin-top:3px}
 .dim-result{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:11px}.dim-result>div{border:1px solid #dfe6ec;background:#fff;border-radius:11px;padding:10px 4px;text-align:center}.dim-result span{display:block;font-size:9px;color:#75838e}.dim-result b{font-size:21px;color:#16283c;letter-spacing:-.5px}.dim-result em{font-style:normal;font-size:10px;color:#5b6d7d;margin-left:2px}
 .verdict-card{background:#f2f8ff;border:1px solid #cfe2f8;border-radius:14px;padding:13px;margin-top:11px}.verdict-top{display:flex;gap:11px;align-items:center}.verdict-icon{width:44px;height:44px;border-radius:50%;background:#fff;color:#1464ca;display:flex;align-items:center;justify-content:center;flex:none}.verdict-icon svg{width:22px;height:22px}

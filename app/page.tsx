@@ -65,30 +65,7 @@ const DEFAULT_DIMS: Dims = { w: "60", h: "45", d: "30" };
  */
 const AI_SCAN_RESULT: Dims = { w: "45", h: "30", d: "67" };
 
-/** /api/measure 응답 */
-type ScanResult = {
-  widthCm: number; depthCm: number; heightCm: number;
-  volumeL: number; longestCm: number; oversize: boolean;
-  sizeClass: "large" | "xlarge" | "oversize";
-  confidence: "high" | "medium" | "low";
-  note: string;
-  source: "llm" | "fallback";
-};
 
-/**
- * 사진을 긴 변 768px·JPEG로 줄여 data URL로 만듭니다.
- * 원본을 그대로 올리면 수 MB라 서버리스 함수 본문 한도에 걸리고 느립니다.
- */
-async function toCompactDataUrl(file: File, max = 768): Promise<string> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  return canvas.toDataURL("image/jpeg", 0.82);
-}
 
 /** 보관대 한 칸의 최대 용적 (L) — lib/train.js의 하단 칸 용적과 같습니다. */
 const MAX_SLOT_L = 105;
@@ -137,6 +114,8 @@ type Ticket = {
   /** 등록된 수하물. null이면 아직 등록 전 */
   bag: ReturnType<typeof bagSpec> | null;
   label: ReturnType<typeof bagLabel> | null;
+  /** 승객이 등록 때 붙인 사진. 역무원이 칸 상세에서 실물과 대조합니다. */
+  photo: string | null;
 };
 
 /** 입력값을 cm 숫자로. 비어 있거나 이상하면 0. */
@@ -455,57 +434,38 @@ function TicketDetailScreen({ ticket, tickets, dest, seatText, allocated, go }: 
   );
 }
 
-function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setWeight, count, setCount, dims, setDims, registered, ticket, tickets, issueTicket, openTicket, registerBag, cancelBag, allocated, setAllocated }: { index: number; go: (n: number) => void; dest: string; setDest: (d: string) => void; size: SizeKey; setSize: (v: SizeKey) => void; weight: WeightKey; setWeight: (v: WeightKey) => void; count: number; setCount: (fn: (c: number) => number) => void; dims: Dims; setDims: (fn: (d: Dims) => Dims) => void; registered: boolean; ticket: Ticket | null; tickets: Ticket[]; issueTicket: () => string; openTicket: (k: string) => boolean; registerBag: () => void; cancelBag: () => void; allocated: boolean; setAllocated: (v: boolean) => void }) {
+function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setWeight, count, setCount, dims, setDims, registered, ticket, tickets, issueTicket, openTicket, registerBag, cancelBag, allocated, setAllocated }: { index: number; go: (n: number) => void; dest: string; setDest: (d: string) => void; size: SizeKey; setSize: (v: SizeKey) => void; weight: WeightKey; setWeight: (v: WeightKey) => void; count: number; setCount: (fn: (c: number) => number) => void; dims: Dims; setDims: (fn: (d: Dims) => Dims) => void; registered: boolean; ticket: Ticket | null; tickets: Ticket[]; issueTicket: () => string; openTicket: (k: string) => boolean; registerBag: (photo?: string | null) => void; cancelBag: () => void; allocated: boolean; setAllocated: (v: boolean) => void }) {
   const [locationTab, setLocationTab] = useState<"car"|"rack">("rack");
   const [issue, setIssue] = useState("다른 수하물이 놓여 있어요");
   const [sent, setSent] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [trip, setTrip] = useState<"one"|"round">("one");
-  // P-02에서 고른 크기 입력 방식. AI를 기본으로 둡니다(레퍼런스의 "추천").
-  const [sizeMode, setSizeMode] = useState<"manual"|"ai">("ai");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [scan, setScan] = useState<"idle"|"analyzing"|"done">("idle");
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const openPicker = () => fileRef.current?.click();
 
   /**
-   * 사진을 고르면 /api/measure로 보내 Claude가 치수를 읽습니다.
+   * 사진을 붙이면 크기 인식 단계로 넘어갑니다.
    *
-   * 키가 없거나 호출이 실패해도 서버가 표준 규격으로 폴백해 200을 주므로
-   * 화면은 멈추지 않습니다. 그때는 응답의 source가 "fallback"입니다.
+   * 실제 이미지 분석은 하지 않습니다. 인식되는 것처럼 잠깐 보여준 뒤 24인치
+   * 캐리어 표준 규격을 채워 넣고, 값이 틀리면 승객이 화면에서 직접 고칩니다.
    */
-  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";  // 같은 파일을 다시 골라도 change가 나도록 비웁니다.
     if (!file) return;
 
     setPhotoUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setScan("analyzing");
-    setScanResult(null);
+    go(3);
 
-    let r: ScanResult | null = null;
-    try {
-      const image = await toCompactDataUrl(file);
-      const res = await fetch("/api/measure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image }),
-      });
-      if (res.ok) r = await res.json();
-    } catch {
-      // 네트워크가 끊겨도 아래 표준 규격으로 진행합니다.
-    }
-
-    const dims: Dims = r
-      ? { w: String(r.widthCm), h: String(r.depthCm), d: String(r.heightCm) }
-      : { ...AI_SCAN_RESULT };
-
-    setScanResult(r);
-    setSize("custom");
-    setDims(() => dims);
-    setScan("done");
+    setTimeout(() => {
+      setSize("custom");
+      setDims(() => ({ ...AI_SCAN_RESULT }));
+      setScan("done");
+    }, 1600);
   };
 
   const photoInput = <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickPhoto}/>;
@@ -544,28 +504,28 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
           <GuideRow icon="clock" title="등록 마감" text="출발 30분 전까지" tone="blue"/>
         </div>
 
-        <h3 className="reg-question">크기를 어떻게 입력할까요?</h3>
-        <button className={`size-mode ${sizeMode === "manual" ? "chosen" : ""}`} onClick={() => setSizeMode("manual")}>
-          <span className="size-mode-icon"><KrlIcon name="ruler"/></span>
-          <span className="size-mode-text"><b>직접 입력하기</b><small>가로·세로·높이를 직접 입력해요</small></span>
-          <em>›</em>
+        {/*
+          사진은 선택 기능이 아니라 등록의 첫 단계입니다. 역무원이 현장에서 실물과
+          대조하는 근거가 되므로, 사진을 붙이면 바로 크기 인식 단계로 넘어갑니다.
+        */}
+        <h3 className="reg-question">수하물 사진을 첨부해 주세요</h3>
+        <button className="scan-empty" onClick={openPicker}>
+          <KrlIcon name="camera"/>
+          <b>수하물 사진 첨부하기</b>
+          <small>정면에서 찍은 사진 한 장이면 됩니다</small>
         </button>
-        {/* 누르는 즉시 파일 선택창을 엽니다. 사진을 고르면 P-03에서 분석 상태로 시작합니다. */}
-        <button className={`size-mode ${sizeMode === "ai" ? "chosen" : ""}`} onClick={() => { setSizeMode("ai"); openPicker(); }}>
-          <span className="size-mode-icon"><KrlIcon name="scan"/></span>
-          <span className="size-mode-text"><b>AI로 크기 인식하기</b><small>사진 한 장으로 간편하게 측정해요</small></span>
-          <span className="size-mode-badge">추천</span>
-          <em>›</em>
-        </button>
+        <p className="ex-hint">첨부한 사진으로 크기를 인식하고, 역무원이 실물을 확인할 때 씁니다.</p>
       </div>
-      <div className="sticky-action"><button className="primary" onClick={() => go(3)}>다음</button></div>
+      <div className="sticky-action">
+        <button className="primary" onClick={openPicker}>사진 첨부하고 시작하기</button>
+      </div>
       {photoInput}
     </div>
   );
 
-  if (index === 3 && sizeMode === "ai") return (
+  if (index === 3) return (
     <div className="phone-screen">
-      <PhoneHeader title="AI 수하물 크기 인식" back={() => go(2)}/>
+      <PhoneHeader title="수하물 크기 인식" back={() => go(2)}/>
       <div className="screen-scroll bottom-space">
         <div className="step-chip"><b>2 / 3</b><span>사진 분석</span></div>
 
@@ -593,17 +553,34 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
         {scan === "done" && <>
           <div className="scan-result-head">
             <span className="scan-result-icon"><KrlIcon name="sparkle"/></span>
-            <div><b>수하물 크기를 인식했어요</b><small>측정값을 확인한 뒤 다음으로 진행해 주세요.</small></div>
+            <div><b>수하물 크기를 인식했어요</b><small>인식된 값이 실제와 다르면 직접 입력해 주세요.</small></div>
           </div>
-          {/* 값은 /api/measure 응답입니다. 폼 상태에도 같은 값이 들어가 있습니다. */}
-          <div className="dim-result">
-            {DIM_FIELDS.map(([key, label]) => <div key={key}><span>{label}</span><b>{dims[key]}</b><em>cm</em></div>)}
+
+          {/* 읽기 전용이 아닙니다. 값이 틀리면 승객이 이 자리에서 바로 고칩니다. */}
+          <div className="dim-edit">
+            {DIM_FIELDS.map(([key, label]) => (
+              <label key={key}>
+                <span>{label}</span>
+                <input type="number" inputMode="numeric" min="10" max="200" value={dims[key]}
+                  onChange={(e)=>setDims((prev)=>({ ...prev, [key]: e.target.value }))}/>
+                <em>cm</em>
+              </label>
+            ))}
           </div>
+          <p className="dim-hint"><KrlIcon name="info"/>인식된 값이 실제와 다르면 직접 입력해 주세요.</p>
+
+          <h3 className="reg-question">예상 무게</h3>
+          <div className="choice-grid">
+            {WEIGHT_OPTIONS.map(([key, name]) => (
+              <button key={key} className={weight===key?"chosen":""} onClick={()=>setWeight(key)}>{name}</button>
+            ))}
+          </div>
+
           <div className="verdict-card">
             <div className="verdict-top">
               <span className="verdict-icon"><KrlIcon name="bag"/></span>
               <div>
-                <small>AI 판정 결과</small>
+                <small>판정 결과</small>
                 <b>{spec.volumeL > MAX_SLOT_L ? "규격 초과" : spec.isXLarge ? "특대형 수하물" : "대형 수하물"}</b>
                 <span>{spec.volumeL > MAX_SLOT_L ? "일반 보관대를 이용할 수 없어요." : `부피 ${spec.volumeL}L · 전용 적재 공간을 이용할 수 있어요.`}</span>
               </div>
@@ -614,9 +591,6 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
               <span className={spec.volumeL <= MAX_SLOT_L && spec.isXLarge ? "on" : ""}>특대형</span>
             </div>
           </div>
-          <p className="scan-note"><KrlIcon name="info"/>{scanResult?.source === "llm"
-            ? `${scanResult.note || "사진에서 치수를 추정했습니다."} 촬영 환경에 따라 실제 크기와 차이가 있을 수 있습니다.`
-            : "사진 분석을 쓸 수 없어 24인치 캐리어 표준 규격을 적용했습니다. 값이 다르면 직접 입력해 주세요."}</p>
         </>}
       </div>
       <div className="sticky-action">
@@ -626,7 +600,6 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
     </div>
   );
 
-  if (index === 3) return <div className="phone-screen"><PhoneHeader title="수하물 정보 입력" back={() => go(2)}/><div className="screen-scroll bottom-space"><div className="mini-trip">KTX 123 · 서울 → {dest} <span>{seatText}</span></div><FormSection number="1" title="수하물 크기"><div className="choice-grid three">{SIZE_OPTIONS.map(([key, name, hint])=><button key={key} className={size===key?"chosen":""} onClick={()=>setSize(key)}>{name}<small>{hint}</small></button>)}</div>{size==="custom" && <><div className="dim-grid">{DIM_FIELDS.map(([key, label])=><label key={key}><span>{label} (cm)</span><input type="number" inputMode="numeric" min="10" max="200" value={dims[key]} onChange={(e)=>setDims((prev)=>({...prev, [key]: e.target.value}))}/></label>)}</div><p className={custom.longestCm>75?"dim-note over":"dim-note"}>부피 {custom.volumeL}L · 최장변 {custom.longestCm}cm{custom.longestCm>75 ? " · 특대형으로 분류돼 하단 칸에 배정돼요" : " · 대형"}</p></>}<p className="hint">바퀴와 손잡이를 포함한 가장 긴 길이를 기준으로 선택해주세요.</p></FormSection><FormSection number="2" title="예상 무게"><div className="choice-grid">{WEIGHT_OPTIONS.map(([key, name])=><button key={key} className={weight===key?"chosen":""} onClick={()=>setWeight(key)}>{name}</button>)}</div></FormSection><label className="consent"><input type="checkbox" defaultChecked/> 수하물 정보가 실제 수하물과 일치합니다.</label></div><div className="sticky-action"><button className="primary" onClick={() => go(4)}>등록 가능 여부 확인</button></div></div>;
 
   // 규격 초과 — 일반 보관대를 못 쓰므로 판정 화면 대신 특송 안내로 이어지는 결과 화면을 냅니다.
   if (index === 4 && tooBig) return (
@@ -715,7 +688,7 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
     </div>
   );
 
-  if (index === 4) return <div className="phone-screen"><PhoneHeader title="등록 가능 여부" back={() => go(3)}/><div className="screen-scroll bottom-space center-content"><div className={tooBig?"success-mark bad":"success-mark"}>{tooBig ? "!" : "✓"}</div><span className="eyebrow">{tooBig ? "AI 규격 확인 결과" : "AI 규격 확인 완료"}</span><h1>{tooBig ? <>등록할 수 없는<br/>수하물이에요</> : <>등록할 수 있는<br/>수하물이에요</>}</h1><p>{tooBig ? `부피 ${spec.volumeL}L로 보관대 한 칸(최대 ${MAX_SLOT_L}L)을 넘어요. 치수를 다시 확인해주세요.` : "출발 30분 전에 좌석과 가까운 보관 위치를 안내해드릴게요."}</p><div className="summary-card"><div className="case-thumb"><KrlIcon name="bag"/></div><div><small>등록 수하물</small><b>{bag.sizeName} 수하물</b><span>{bag.weightName}</span></div></div><div className="ai-reason"><Icon name="sparkle"/><p>{tooBig ? <><b>등록 전에 수정이 필요해요</b><br/>가로·세로·높이를 줄이거나 크기 등급을 다시 골라주세요.</> : <><b>{spec.isXLarge ? "아래쪽 칸으로 우선 배정해요" : "위쪽 칸으로 배정해요"}</b><br/>부피 {spec.volumeL}L · 무게와 이동 안전성을 함께 고려합니다.</>}</p></div></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(3)}>정보 수정</button><button className="primary" disabled={tooBig} style={tooBig?{opacity:.4}:undefined} onClick={() => { if (!tooBig) { registerBag(); go(5); } }}>{tooBig ? "등록 불가" : "이 정보로 등록하기"}</button></div></div>;
+  if (index === 4) return <div className="phone-screen"><PhoneHeader title="등록 가능 여부" back={() => go(3)}/><div className="screen-scroll bottom-space center-content"><div className={tooBig?"success-mark bad":"success-mark"}>{tooBig ? "!" : "✓"}</div><span className="eyebrow">{tooBig ? "AI 규격 확인 결과" : "AI 규격 확인 완료"}</span><h1>{tooBig ? <>등록할 수 없는<br/>수하물이에요</> : <>등록할 수 있는<br/>수하물이에요</>}</h1><p>{tooBig ? `부피 ${spec.volumeL}L로 보관대 한 칸(최대 ${MAX_SLOT_L}L)을 넘어요. 치수를 다시 확인해주세요.` : "출발 30분 전에 좌석과 가까운 보관 위치를 안내해드릴게요."}</p><div className="summary-card"><div className="case-thumb"><KrlIcon name="bag"/></div><div><small>등록 수하물</small><b>{bag.sizeName} 수하물</b><span>{bag.weightName}</span></div></div><div className="ai-reason"><Icon name="sparkle"/><p>{tooBig ? <><b>등록 전에 수정이 필요해요</b><br/>가로·세로·높이를 줄이거나 크기 등급을 다시 골라주세요.</> : <><b>{spec.isXLarge ? "아래쪽 칸으로 우선 배정해요" : "위쪽 칸으로 배정해요"}</b><br/>부피 {spec.volumeL}L · 무게와 이동 안전성을 함께 고려합니다.</>}</p></div></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(3)}>정보 수정</button><button className="primary" disabled={tooBig} style={tooBig?{opacity:.4}:undefined} onClick={() => { if (!tooBig) { registerBag(photoUrl); go(5); } }}>{tooBig ? "등록 불가" : "이 정보로 등록하기"}</button></div></div>;
 
   if (index === 5) return <div className="phone-screen"><PhoneHeader title="수하물 등록" back={() => go(1)}/><div className="screen-scroll bottom-space"><div className="status-hero waiting"><div className="clock-ring"><KrlIcon name="clock"/></div><span className="pill amber">{allocated ? "AI 배정 진행" : "배정 대기"}</span><h1>수하물 등록이<br/>완료됐어요</h1><p>좌석 위치와 전체 수하물 현황을 고려해 출발 30분 전부터 배정합니다.</p></div>{!allocated && <div className="notice blue"><b>아직 배정 전이에요</b><p>등록된 승차권 {tickets.filter((t)=>t.bag).length}건을 모아 출발 30분 전에 한 번에 배정합니다. 승차권을 더 등록하려면 예매 화면으로 돌아가세요.</p></div>}<div className="detail-card"><div><span>등록 수하물</span><b>{bag.sizeName} 수하물</b></div><div><span>승차권 번호</span><b>{ticket?.key ?? "-"}</b></div><div><span>위치 안내 예정</span><b className="blue-text">오늘 오후 4:30</b></div></div><div className="push-note"><Icon name="bell"/><p><b>앱 알림으로 알려드릴게요</b><br/>출발 30분 전까지 수정하거나 취소할 수 있어요.</p></div><button className="demo-link" onClick={() => setAllocated(true)}>{allocated ? "배정 진행 중…" : "발표 시연: 출발 30분 전으로 건너뛰기 →"}</button></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(9)}>등록 정보 보기</button><button className="primary" onClick={() => { if (!allocated) setAllocated(true); else go(6); }}>{allocated ? "배정 결과 보기" : "출발 30분 전 · AI 배정 시작"}</button></div></div>;
 
@@ -734,7 +707,6 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
 function GuideRow({ icon, title, text, tone }: { icon: IconName; title: string; text: string; tone?: string }) {
   return <div className="guide-row"><span className="guide-row-icon"><KrlIcon name={icon}/></span><div><b>{title}</b><p className={tone}>{text}</p></div></div>;
 }
-function FormSection({ number, title, children }: { number: string; title: string; children: React.ReactNode }) { return <section className="form-section"><h3><span>{number}</span>{title}</h3>{children}</section>; }
 
 function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number) => void; dest: string }) {
   // S-07~S-10을 지운 뒤에도 원본 마크업에는 그 화면으로 가는 버튼이 남아 있습니다.
@@ -856,7 +828,7 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
 
   if (index === 3) return <div className="phone-screen staff"><PhoneHeader title="전체 적재 위치도" back={()=>go(1)} staff/><div className="staff-filters">{["전체","승객","특송","여유","확인 필요"].map(x=><button key={x} className={filter===x?"active":""} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="screen-scroll"><TrainMap selected={car} onSelect={setCar}/><div className="map-heading"><div><span>{car} · {rackOf(car)} 보관대</span><h2>5/6칸 배정</h2></div><small>좌석 번호만 표시</small></div><LockerMap staff rack={rackOf(car)} selected={selectedCell} onSelect={(id)=>{setSelectedCell(id);go(4)}}/><div className="legend"><span><i className="passenger-dot"></i>승객</span><span><i className="express-dot"></i>특송</span><span><i className="empty-dot"></i>여유</span></div><div className="alert-list"><b>확인 필요</b><button onClick={()=>go(9)}><span>9호차 A-02</span><em>사용 불가 · 특송 #A13 ›</em></button></div><div className="privacy-note">승객 이름은 표시하지 않으며 업무에 필요한 좌석 번호만 제공합니다.</div></div><BottomNav staff active="trains"/></div>;
 
-  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={reportIssue}>현장 문제 등록</button></div></div>;
+  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo">{/* 승객이 등록 때 붙인 사진을 app.js가 채웁니다. */}<img data-app="cell-img" alt="" hidden/><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={reportIssue}>현장 문제 등록</button></div></div>;
 
   // S-06 특송 작업 — 적재 준비 / 하역 예정 두 섹션. 값은 app.js가 배정 결과로 채웁니다.
   if (index === 5) return (
@@ -1031,7 +1003,7 @@ export default function Home() {
   const issueTicket = () => {
     const key = makeTicketKey(tickets.map((t) => t.key));
     const seat = SEAT_POOL[tickets.length % SEAT_POOL.length];
-    setTickets((prev) => [...prev, { key, dest, seatCar: seat.car, seat: seat.seat, bag: null, label: null }]);
+    setTickets((prev) => [...prev, { key, dest, seatCar: seat.car, seat: seat.seat, bag: null, label: null, photo: null }]);
     setActiveKey(key);
     setSize("xlarge"); setWeight("10to20"); setCount(1); setDims(DEFAULT_DIMS);
     return key;
@@ -1047,16 +1019,16 @@ export default function Home() {
   };
 
   /** 현재 승차권에 수하물을 등록합니다. */
-  const registerBag = () => {
+  const registerBag = (photo: string | null = null) => {
     if (!ticket) return;
     const spec = bagSpec(size, weight, count, dims);
     const label = bagLabel(size, weight, count, dims);
-    setTickets((prev) => prev.map((t) => (t.key === ticket.key ? { ...t, dest, bag: spec, label } : t)));
+    setTickets((prev) => prev.map((t) => (t.key === ticket.key ? { ...t, dest, bag: spec, label, photo } : t)));
   };
 
   const cancelBag = () => {
     if (!ticket) return;
-    setTickets((prev) => prev.map((t) => (t.key === ticket.key ? { ...t, bag: null, label: null } : t)));
+    setTickets((prev) => prev.map((t) => (t.key === ticket.key ? { ...t, bag: null, label: null, photo: null } : t)));
   };
   const list = mode === "passenger" ? passengerScreens : staffScreens;
   const current = list[screen];
@@ -1067,7 +1039,7 @@ export default function Home() {
       allocated,
       passengers: tickets
         .filter((t) => t.bag)
-        .map((t) => ({ key: t.key, dest: t.dest, seatCar: t.seatCar, seat: t.seat, ...t.bag! })),
+        .map((t) => ({ key: t.key, dest: t.dest, seatCar: t.seatCar, seat: t.seat, photo: t.photo, ...t.bag! })),
       // 짐 목록이 바뀌면 app.js가 이걸 불러 배정 전 상태로 되돌립니다.
       // 30분 전 트리거를 다시 눌러야 새 목록으로 배정됩니다.
       setAllocated,

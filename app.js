@@ -1163,9 +1163,24 @@ bind("S-05 칸 상세", () => {
 
   const kind = $('[data-app="cell-kind"]');
   const photo = $('[data-app="cell-photo"]');
+  const img = $('[data-app="cell-img"]');
+
+  /** 승객이 등록 때 붙인 사진. 없으면 아이콘 자리로 되돌립니다. */
+  const showPhoto = (src) => {
+    if (!img) return;
+    if (src) {
+      setAttr(img, "src", src);
+      img.hidden = false;
+      hideEl($(".luggage-photo .case-big"));
+    } else {
+      img.hidden = true;
+      img.removeAttribute("src");
+    }
+  };
 
   if (!a) {
     // 배정 전이거나 빈 칸입니다. 하드코딩된 값처럼 보이지 않도록 전부 비웁니다.
+    showPhoto(null);
     setText(kind, state.plan ? "빈 칸" : "배정 전");
     setText(photo, state.plan ? "등록된 수하물 없음" : "배정 전");
     for (const label of ["좌석", "하차역", "규격", "등록번호"]) setText(byLabel(label), "—");
@@ -1175,8 +1190,12 @@ bind("S-05 칸 상세", () => {
   const freight = a.kind === "freight";
   const d = a.dimensions;
 
+  // 승객 수하물이면 등록 때 붙인 사진을 찾아 보여줍니다.
+  const pax = currentPassengers().find((p) => p.key === a.ticketKey);
+  showPhoto(freight ? null : pax?.photo ?? null);
+
   setText(kind, freight ? "특송 화물" : "승객 수하물");
-  setText(photo, freight ? "특송 화물" : "등록된 수하물");
+  setText(photo, freight ? "특송 화물" : pax?.photo ? "승객이 등록한 사진" : "등록된 사진 없음");
   setText(byLabel("좌석"), freight ? "특송 · 좌석 없음" : `${a.seatCar}호차 ${a.seat ?? ""}`.trim());
   setText(byLabel("하차역"), a.destination ?? "—");
   setText(
