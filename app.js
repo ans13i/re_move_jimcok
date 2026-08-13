@@ -1142,11 +1142,8 @@ bind("S-04 적재 위치도", () => {
 // ── S-05 칸 상세: 없어진 화면으로 가는 버튼 정리 ──
 bind("S-05 칸 상세", () => {
   if (screenId() !== "S-05") return;
-  // '다른 위치로 변경'(S-09)·'현장 문제 등록'(S-08)은 삭제된 화면입니다.
-  for (const label of ["다른 위치로 변경", "현장 문제 등록"]) {
-    const b = $$(".sticky-action button").find((el) => el.textContent.trim() === label);
-    hideEl(b);
-  }
+  // '다른 위치로 변경'은 아직 없는 화면입니다. '현장 문제 등록'은 S-07로 살아 있습니다.
+  hideEl($$(".sticky-action button").find((el) => el.textContent.trim() === "다른 위치로 변경"));
 
   // 선택한 칸("A-03")과 호차를 머리말에서 읽어 그 칸의 배정을 찾습니다.
   const cell = ($(".cell-detail-head h1")?.textContent ?? "").trim();

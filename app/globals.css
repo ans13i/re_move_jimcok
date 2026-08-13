@@ -69,6 +69,47 @@
 .clock-ring svg{width:26px;height:26px}.status-banner svg{width:11px;height:11px;vertical-align:-1px}.ai-badge svg{width:10px;height:10px;vertical-align:-1px}
 .qr-code .qr-blocks{display:grid;grid-template-columns:repeat(13,1fr);width:100%;height:100%;font-size:0;letter-spacing:0}
 .qr-blocks i{display:block;width:100%;aspect-ratio:1;background:transparent}.qr-blocks i.on{background:#111}
+/* S-07 예외 처리 — 현장 문제 등록 */
+.ex-loc{background:#fff;border:1px solid #e1e8ed;border-radius:14px;padding:13px 14px}
+.ex-loc-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.ex-loc-head span{font-size:10px;color:#7b899a}.ex-loc-head b{font-size:11px;color:#16283c;text-align:right}
+.ex-selects{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
+.ex-selects label{display:flex;flex-direction:column;gap:4px}
+.ex-selects span{font-size:8px;color:#8a98a1}
+.ex-selects select{appearance:none;width:100%;border:1px solid #d9e2e8;background:#f7fafd;border-radius:9px;padding:9px 24px 9px 10px;font-size:11px;font-weight:800;color:#16283c;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7d8f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6.4 9.4 5.6 5.6 5.6-5.6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 8px center;background-size:11px}
+.ex-selects select:focus{outline:none;border-color:#1764ca;background-color:#fff}
+.ex-title{font-size:11.5px;margin:20px 2px 9px;display:flex;align-items:center;gap:6px}
+.ex-title em{font-style:normal;font-size:8.5px;font-weight:400;color:#8a98a1}
+.ex-drop{width:100%;border:1.6px dashed #aab9c3;background:#fff;border-radius:12px;padding:26px 16px;display:flex;flex-direction:column;align-items:center;gap:7px;color:#5b7488}
+.ex-drop i{font-style:normal;font-size:22px;font-weight:300;color:#3f5568;line-height:1}
+.ex-drop b{font-size:10px;color:#2a3d4d}
+.ex-photo{position:relative;border-radius:12px;overflow:hidden;background:#e8eef2}
+.ex-photo img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+.ex-photo button{position:absolute;right:9px;bottom:9px;border:0;background:#fffffff2;color:#2a3d4d;border-radius:14px;padding:6px 11px;font-size:9px;font-weight:800;box-shadow:0 2px 8px #16283c26}
+.ex-hint{font-size:8.5px;color:#8a98a1;margin:8px 2px 0}
+.staff .screen-scroll textarea{height:74px;font-size:10px;padding:11px}
+
+/* S-08 수동 재배정 */
+.ra-current{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff2f2;border:1px solid #f2ced1;border-radius:14px;padding:14px}
+.ra-current span{display:block;font-size:9px;color:#a57174;margin-bottom:5px}.ra-current b{font-size:19px;color:#16283c;letter-spacing:-.4px}
+.ra-current em{font-style:normal;background:#e0454e;color:#fff;border-radius:16px;padding:6px 11px;font-size:9px;font-weight:800;white-space:nowrap}
+.ra-head{display:flex;justify-content:space-between;align-items:baseline;margin:20px 2px 10px}.ra-head h3{margin:0;font-size:12.5px}.ra-head small{font-size:8.5px;color:#8a98a1}
+.ra-pick{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:11px;border:1px solid #dde5ea;background:#fff;border-radius:12px;padding:12px;margin-bottom:8px;text-align:left}
+.ra-pick.on{border:2px solid #172b40}
+.ra-rank{background:#eef2f5;color:#66788a;border-radius:14px;padding:6px 9px;font-size:8.5px;font-weight:800;white-space:nowrap}
+.ra-pick.on .ra-rank{background:#172b40;color:#fff}
+.ra-copy{display:flex;flex-direction:column;min-width:0}.ra-copy b{font-size:12px;color:#16283c}.ra-copy small{font-size:8.5px;color:#7b8993;margin-top:3px;word-break:keep-all}
+.ra-pick i{font-style:normal;font-size:11px;color:#9aa7b1}.ra-pick.on i{color:#172b40}
+.ra-skeleton{display:flex;flex-direction:column;gap:8px}.ra-skeleton i{display:block;height:56px;border-radius:12px;background:linear-gradient(90deg,#eef2f5 25%,#e2e8ee 37%,#eef2f5 63%);background-size:400% 100%;animation:js-shimmer 1.2s ease-in-out infinite}
+.ra-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:#bcc8d0;padding:8px;border-radius:12px;margin-top:14px}
+.ra-cell{border:0;border-radius:6px;padding:14px 4px;display:flex;flex-direction:column;align-items:center;gap:5px;background:#eef1f3}
+.ra-cell b{font-size:11px}.ra-cell span{font-size:7px}
+.ra-cell.open{background:#e6f7ef;color:#16855c}.ra-cell.shut{background:#e6e9ec;color:#8a949d}
+.ra-cell.shut b{color:#8a949d}.ra-cell.on{background:#172b40;color:#fff}.ra-cell.on b,.ra-cell.on span{color:#fff}
+.ra-note{background:#eef2f5;color:#68788a;border-radius:9px;padding:10px 11px;font-size:8.5px;line-height:1.55;margin:12px 0 0;word-break:keep-all}
+
 /* S-04 상단 열차 도식 — 호차 선택 + 적재율 */
 .train-map{margin-bottom:14px}
 .train-strip{display:flex;align-items:flex-end;gap:3px;position:relative}

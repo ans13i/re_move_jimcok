@@ -60,10 +60,35 @@ type Dims = { w: string; h: string; d: string };
 const DEFAULT_DIMS: Dims = { w: "60", h: "45", d: "30" };
 
 /**
- * AI 크기 인식 결과 — 24인치 캐리어 표준 외형(45×30×67cm)으로 하드코딩한 시연값입니다.
+ * AI가 응답하지 못했을 때 쓰는 값 — 24인치 캐리어 표준 외형(45×30×67cm).
  * 부피 90L라 보관대 한 칸(105L) 안에 들어가고 최장변 67cm라 "대형"으로 판정됩니다.
  */
 const AI_SCAN_RESULT: Dims = { w: "45", h: "30", d: "67" };
+
+/** /api/measure 응답 */
+type ScanResult = {
+  widthCm: number; depthCm: number; heightCm: number;
+  volumeL: number; longestCm: number; oversize: boolean;
+  sizeClass: "large" | "xlarge" | "oversize";
+  confidence: "high" | "medium" | "low";
+  note: string;
+  source: "llm" | "fallback";
+};
+
+/**
+ * 사진을 긴 변 768px·JPEG로 줄여 data URL로 만듭니다.
+ * 원본을 그대로 올리면 수 MB라 서버리스 함수 본문 한도에 걸리고 느립니다.
+ */
+async function toCompactDataUrl(file: File, max = 768): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
 
 /** 보관대 한 칸의 최대 용적 (L) — lib/train.js의 하단 칸 용적과 같습니다. */
 const MAX_SLOT_L = 105;
@@ -163,6 +188,27 @@ function tripInfo(dest: string) {
 const staffScreens = [
   ["S-01", "담당 열차 홈"], ["S-02", "열차 운영 요약"], ["S-03", "AI 배정안 검토"],
   ["S-04", "전체 적재 위치도"], ["S-05", "칸 상세"], ["S-06", "적재 체크리스트"],
+  ["S-07", "예외 처리"], ["S-08", "수동 재배정"],
+] as const;
+
+/** /api/reassign 응답 */
+type ReassignSlot = { slotId: string; label: string; index: number; selectable: boolean; blockedReason: string | null };
+type ReassignPick = { slotId: string; label: string; rank: number; reason: string };
+type ReassignResult = {
+  current: { slotId: string; label: string; itemId: string | null } | null;
+  candidates: ReassignSlot[];
+  recommendations: ReassignPick[];
+  source: "ranked" | "none";
+};
+
+/** 현장에서 고를 수 있는 문제 유형 */
+const ISSUE_TYPES = [
+  "다른 수하물이 적재되어 있음",
+  "배정된 물품이 없음",
+  "미등록 대형 수하물 발견",
+  "보관대 파손·사용 불가",
+  "화물 또는 수하물 파손",
+  "QR 인식 불가",
 ] as const;
 
 /** 연한 파란 칩 안에 들어가는 아이콘. 내용은 KRL_ICONS의 인라인 SVG입니다. */
@@ -194,10 +240,14 @@ function TrainCard({ dest, seatText, ticketKey }: { dest: string; seatText: stri
   );
 }
 
-function LockerMap({ staff = false, selected = "A-03", onSelect }: { staff?: boolean; selected?: string; onSelect?: (id: string) => void }) {
+/** 보관대 문자는 호차마다 다릅니다. 칸 id를 A로 고정하면 선택값이 다른 호차와 어긋납니다. */
+function LockerMap({ staff = false, rack = "A", selected = "A-03", onSelect }: { staff?: boolean; rack?: string; selected?: string; onSelect?: (id: string) => void }) {
+  const ids = Array.from({ length: SLOTS_PER_CAR }, (_, i) => `${rack}-${String(i + 1).padStart(2, "0")}`);
+  const staffLabels = ["승객 · 8C","승객 · 11A","승객 · 12A","여유","특송 #A13","특송 #C21"];
+  const staffTypes = ["passenger","passenger","passenger","empty","express-wait","express-done"];
   const cells = staff
-    ? [{id:"A-01",type:"passenger",label:"승객 · 8C"},{id:"A-02",type:"passenger",label:"승객 · 11A"},{id:"A-03",type:"passenger",label:"승객 · 12A"},{id:"A-04",type:"empty",label:"여유"},{id:"A-05",type:"express-wait",label:"특송 #A13"},{id:"A-06",type:"express-done",label:"특송 #C21"}]
-    : ["A-01","A-02","A-03","A-04","A-05","A-06"].map(id => ({id,type:id === selected ? "mine" : "neutral",label:id === selected ? "내 수하물" : ""}));
+    ? ids.map((id, i) => ({ id, type: staffTypes[i], label: staffLabels[i] }))
+    : ids.map(id => ({id,type:id === selected ? "mine" : "neutral",label:id === selected ? "내 수하물" : ""}));
   return <div className="locker-map">{cells.map(c => <button key={c.id} className={`locker-cell ${c.type} ${selected === c.id ? "selected" : ""}`} onClick={() => onSelect?.(c.id)}><b>{c.id}</b><span>{c.label}</span></button>)}</div>;
 }
 
@@ -415,25 +465,47 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
   const [sizeMode, setSizeMode] = useState<"manual"|"ai">("ai");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [scan, setScan] = useState<"idle"|"analyzing"|"done">("idle");
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const openPicker = () => fileRef.current?.click();
 
   /**
-   * 사진을 고르면 인식 중 → 인식 완료로 넘어가고, 완료 시점에 측정값을 폼 상태에 씁니다.
-   * 판정은 하드코딩된 시연값이라 실제 이미지 분석은 하지 않습니다.
+   * 사진을 고르면 /api/measure로 보내 Claude가 치수를 읽습니다.
+   *
+   * 키가 없거나 호출이 실패해도 서버가 표준 규격으로 폴백해 200을 주므로
+   * 화면은 멈추지 않습니다. 그때는 응답의 source가 "fallback"입니다.
    */
-  const onPickPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";  // 같은 파일을 다시 골라도 change가 나도록 비웁니다.
     if (!file) return;
+
     setPhotoUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setScan("analyzing");
-    setTimeout(() => {
-      setScan("done");
-      setSize("custom");
-      setDims(() => ({ ...AI_SCAN_RESULT }));
-    }, 1600);
+    setScanResult(null);
+
+    let r: ScanResult | null = null;
+    try {
+      const image = await toCompactDataUrl(file);
+      const res = await fetch("/api/measure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image }),
+      });
+      if (res.ok) r = await res.json();
+    } catch {
+      // 네트워크가 끊겨도 아래 표준 규격으로 진행합니다.
+    }
+
+    const dims: Dims = r
+      ? { w: String(r.widthCm), h: String(r.depthCm), d: String(r.heightCm) }
+      : { ...AI_SCAN_RESULT };
+
+    setScanResult(r);
+    setSize("custom");
+    setDims(() => dims);
+    setScan("done");
   };
 
   const photoInput = <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickPhoto}/>;
@@ -523,17 +595,28 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
             <span className="scan-result-icon"><KrlIcon name="sparkle"/></span>
             <div><b>수하물 크기를 인식했어요</b><small>측정값을 확인한 뒤 다음으로 진행해 주세요.</small></div>
           </div>
+          {/* 값은 /api/measure 응답입니다. 폼 상태에도 같은 값이 들어가 있습니다. */}
           <div className="dim-result">
-            {DIM_FIELDS.map(([key, label]) => <div key={key}><span>{label}</span><b>{AI_SCAN_RESULT[key]}</b><em>cm</em></div>)}
+            {DIM_FIELDS.map(([key, label]) => <div key={key}><span>{label}</span><b>{dims[key]}</b><em>cm</em></div>)}
           </div>
           <div className="verdict-card">
             <div className="verdict-top">
               <span className="verdict-icon"><KrlIcon name="bag"/></span>
-              <div><small>AI 판정 결과</small><b>대형 수하물</b><span>전용 적재 공간을 이용할 수 있어요.</span></div>
+              <div>
+                <small>AI 판정 결과</small>
+                <b>{spec.volumeL > MAX_SLOT_L ? "규격 초과" : spec.isXLarge ? "특대형 수하물" : "대형 수하물"}</b>
+                <span>{spec.volumeL > MAX_SLOT_L ? "일반 보관대를 이용할 수 없어요." : `부피 ${spec.volumeL}L · 전용 적재 공간을 이용할 수 있어요.`}</span>
+              </div>
             </div>
-            <div className="verdict-scale"><span>소형 · 수하물 불가</span><span className="on">대형</span><span>특대형</span></div>
+            <div className="verdict-scale">
+              <span className={spec.volumeL > MAX_SLOT_L ? "on" : ""}>소형 · 수하물 불가</span>
+              <span className={spec.volumeL <= MAX_SLOT_L && !spec.isXLarge ? "on" : ""}>대형</span>
+              <span className={spec.volumeL <= MAX_SLOT_L && spec.isXLarge ? "on" : ""}>특대형</span>
+            </div>
           </div>
-          <p className="scan-note"><KrlIcon name="info"/>촬영 환경에 따라 실제 크기와 약간의 차이가 있을 수 있습니다.</p>
+          <p className="scan-note"><KrlIcon name="info"/>{scanResult?.source === "llm"
+            ? `${scanResult.note || "사진에서 치수를 추정했습니다."} 촬영 환경에 따라 실제 크기와 차이가 있을 수 있습니다.`
+            : "사진 분석을 쓸 수 없어 24인치 캐리어 표준 규격을 적용했습니다. 값이 다르면 직접 입력해 주세요."}</p>
         </>}
       </div>
       <div className="sticky-action">
@@ -663,9 +746,77 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
   const [selectedCell, setSelectedCell] = useState("A-03");
   const [confirmed, setConfirmed] = useState(false);
   const [prepared, setPrepared] = useState(["A13","A14","C21","B07"]);
+  // S-07 예외 처리 — 발생 위치는 호차·칸 두 드롭다운으로 고릅니다.
+  const [exCar, setExCar] = useState("9호차");
+  const [exCell, setExCell] = useState("B-02");
+  const [exType, setExType] = useState<string>(ISSUE_TYPES[0]);
+  const [exMemo, setExMemo] = useState("");
+  const [exPhoto, setExPhoto] = useState<string | null>(null);
+  const [exSent, setExSent] = useState(false);
+  const exFileRef = useRef<HTMLInputElement>(null);
+
+  /** 호차를 바꾸면 그 호차의 보관대 칸으로 목록과 선택값을 함께 갈아끼웁니다. */
+  const pickExCar = (next: string) => {
+    setExCar(next);
+    setExCell(`${rackOf(next)}-01`);
+  };
+
+  const onPickExPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setExPhoto((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+  };
+
+  /** S-05에서 넘어올 때 그 칸을 발생 위치 기본값으로 씁니다. */
+  const reportIssue = () => {
+    setExCar(car);
+    setExCell(selectedCell);
+    setExSent(false);
+    go(6);
+  };
+
+  // S-08 수동 재배정 — 문제로 막힌 칸의 대체 위치를 AI에게 물어봅니다.
+  const [reassign, setReassign] = useState<ReassignResult | null>(null);
+  const [reassignBusy, setReassignBusy] = useState(false);
+  const [pickedSlot, setPickedSlot] = useState("");
+  const [moved, setMoved] = useState(false);
+
+  /**
+   * 문제 등록을 마치면 그 칸을 사용 불가로 두고 대체 위치를 받아 옵니다.
+   * app.js가 들고 있는 배정 결과를 그대로 넘겨 서버가 같은 상태를 재구성합니다.
+   */
+  const openReassign = async () => {
+    const blockedSlotId = `${exCar.replace("호차", "")}-${exCell}`;
+    setMoved(false);
+    setPickedSlot("");
+    setReassign(null);
+    setReassignBusy(true);
+    go(7);
+
+    const app = (window as unknown as { app?: { state?: { plan?: { allocations?: unknown[] } } } }).app;
+    const jim = (window as unknown as { __jimkkok?: { passengers?: unknown[] } }).__jimkkok;
+
+    try {
+      const res = await fetch("/api/reassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blockedSlotId,
+          allocations: app?.state?.plan?.allocations ?? [],
+          passengers: jim?.passengers ?? [],
+        }),
+      });
+      const data: ReassignResult = await res.json();
+      setReassign(data);
+      setPickedSlot(data.recommendations[0]?.slotId ?? "");
+    } catch {
+      setReassign({ current: null, candidates: [], recommendations: [], source: "none" });
+    } finally {
+      setReassignBusy(false);
+    }
+  };
   const [scanStage, setScanStage] = useState(0);
-  const [issueType, setIssueType] = useState("다른 수하물이 적재되어 있음");
-  const [reassign, setReassign] = useState("A-04");
 
   if (index === 0) return <div className="phone-screen staff"><PhoneHeader title="오늘의 적재 업무" staff/><div className="screen-scroll"><div className="work-date"><span>8월 13일 · 서울역</span><button>필터<KrlIcon name="chevronDown"/></button></div><div className="summary-strip"><div><b>3</b><span>담당 열차</span></div><div><b>1</b><span>검토 필요</span></div><div><b>8</b><span>특송 건수</span></div></div><div className="section-title"><h3>지금 확인할 열차</h3><span>출발 순</span></div><div className="staff-train-card urgent"><div className="card-status"><span className="pill red">검토 필요</span><small>출발 24분 전</small></div><h2>KTX 123 · 서울 → 부산</h2><p>17:00 출발 · 8번 승강장</p><div className="staff-metrics"><span>승객 수하물 <b>34개</b></span><span>특송 <b>8건</b></span><span>확인 필요 <b className="red-text">1건</b></span></div><button className="primary" onClick={()=>go(1)}>운영 현황 보기</button></div><div className="staff-train-card"><div className="card-status"><span className="pill orange">특송 준비</span><small>출발 54분 전</small></div><h2>KTX 231 · 서울 → 광주송정</h2><p>17:30 출발 · 승강장 미정</p></div></div><BottomNav staff active="home"/></div>;
 
@@ -673,11 +824,139 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
 
   if (index === 2) return <div className="phone-screen staff"><PhoneHeader title="AI 배정안 검토" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="ai-review-head"><span className="ai-badge"><KrlIcon name="sparkle"/> AI 적재 최적화</span><h1>{confirmed ? "배정안이 확정됐습니다" : "확정 전 마지막으로\n확인해주세요"}</h1><p>{confirmed ? "승객 위치 안내를 발송하고 특송 준비 목록을 만들었어요." : "좌석 거리·무게·하차 동선을 반영한 결과입니다."}</p></div><div className="review-stats"><div><b>41</b><span>배정 가능</span></div><div><b className="blue-text">40</b><span>자동 배정</span></div><div><b className="red-text">1</b><span>확인 필요</span></div></div><div className="filter-row"><button className="active">전체 41</button><button>문제 항목 1</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>승객 · 7호차 12A</b><small>좌석과 가장 가까운 사용 가능 위치</small></div><strong>A-03</strong></div><div className="allocation-row alert"><span className="pill red">확인 필요</span><div><b>특송 #A13 · 서울 → 대전</b><small>9호차 B-02 · 사용 불가 위치</small></div><button onClick={()=>go(9)}>변경</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>특송 #C21 · 서울 → 동대구</b><small>같은 하차역 작업 동선 최적화</small></div><strong>12-C04</strong></div></div><div className="sticky-action dual"><button className="secondary" onClick={()=>go(3)}>위치도 보기</button><button className="primary dark" onClick={()=>setConfirmed(true)}>{confirmed ? "객차별 준비로 이동" : "배정안 확정"}</button></div></div>;
 
-  if (index === 3) return <div className="phone-screen staff"><PhoneHeader title="전체 적재 위치도" back={()=>go(1)} staff/><div className="staff-filters">{["전체","승객","특송","여유","확인 필요"].map(x=><button key={x} className={filter===x?"active":""} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="screen-scroll"><TrainMap selected={car} onSelect={setCar}/><div className="map-heading"><div><span>{car} · {rackOf(car)} 보관대</span><h2>5/6칸 배정</h2></div><small>좌석 번호만 표시</small></div><LockerMap staff selected={selectedCell} onSelect={(id)=>{setSelectedCell(id);go(4)}}/><div className="legend"><span><i className="passenger-dot"></i>승객</span><span><i className="express-dot"></i>특송</span><span><i className="empty-dot"></i>여유</span></div><div className="alert-list"><b>확인 필요</b><button onClick={()=>go(9)}><span>9호차 A-02</span><em>사용 불가 · 특송 #A13 ›</em></button></div><div className="privacy-note">승객 이름은 표시하지 않으며 업무에 필요한 좌석 번호만 제공합니다.</div></div><BottomNav staff active="trains"/></div>;
+  if (index === 3) return <div className="phone-screen staff"><PhoneHeader title="전체 적재 위치도" back={()=>go(1)} staff/><div className="staff-filters">{["전체","승객","특송","여유","확인 필요"].map(x=><button key={x} className={filter===x?"active":""} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="screen-scroll"><TrainMap selected={car} onSelect={setCar}/><div className="map-heading"><div><span>{car} · {rackOf(car)} 보관대</span><h2>5/6칸 배정</h2></div><small>좌석 번호만 표시</small></div><LockerMap staff rack={rackOf(car)} selected={selectedCell} onSelect={(id)=>{setSelectedCell(id);go(4)}}/><div className="legend"><span><i className="passenger-dot"></i>승객</span><span><i className="express-dot"></i>특송</span><span><i className="empty-dot"></i>여유</span></div><div className="alert-list"><b>확인 필요</b><button onClick={()=>go(9)}><span>9호차 A-02</span><em>사용 불가 · 특송 #A13 ›</em></button></div><div className="privacy-note">승객 이름은 표시하지 않으며 업무에 필요한 좌석 번호만 제공합니다.</div></div><BottomNav staff active="trains"/></div>;
 
-  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={()=>go(8)}>현장 문제 등록</button></div></div>;
+  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={reportIssue}>현장 문제 등록</button></div></div>;
 
-  return <div className="phone-screen staff"><PhoneHeader title="적재 체크리스트" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="progress-card"><div><span>적재 진행률</span><b>{prepared.length} / 7건</b></div><div className="progress"><i style={{width:`${prepared.length/7*100}%`}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>{[["9호차",[["A13","B-03","대전"],["A14","B-04","대전"]]],["12호차",[["C21","C-04","동대구"]]],["14호차",[["B07","D-04","부산"],["B08","D-05","부산"]]]].map(([c,rows])=><div className="prep-group" key={c as string}><h3>{c as string} <span>{(rows as string[][]).length}건</span></h3>{(rows as string[][]).map(([id,pos,dest])=><button key={id} onClick={()=>setPrepared(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])}><i className={prepared.includes(id)?"checked":""}>{prepared.includes(id)?"✓":""}</i><span><b>#{id} → {pos}</b><small>{dest} 하역</small></span><em>›</em></button>)}</div>)}</div><div className="sticky-action"><button className="primary dark" onClick={()=>go(1)}>적재 완료 처리</button></div></div>;
+  if (index === 5) return <div className="phone-screen staff"><PhoneHeader title="적재 체크리스트" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="progress-card"><div><span>적재 진행률</span><b>{prepared.length} / 7건</b></div><div className="progress"><i style={{width:`${prepared.length/7*100}%`}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>{[["9호차",[["A13","B-03","대전"],["A14","B-04","대전"]]],["12호차",[["C21","C-04","동대구"]]],["14호차",[["B07","D-04","부산"],["B08","D-05","부산"]]]].map(([c,rows])=><div className="prep-group" key={c as string}><h3>{c as string} <span>{(rows as string[][]).length}건</span></h3>{(rows as string[][]).map(([id,pos,dest])=><button key={id} onClick={()=>setPrepared(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])}><i className={prepared.includes(id)?"checked":""}>{prepared.includes(id)?"✓":""}</i><span><b>#{id} → {pos}</b><small>{dest} 하역</small></span><em>›</em></button>)}</div>)}</div><div className="sticky-action"><button className="primary dark" onClick={()=>go(1)}>적재 완료 처리</button></div></div>;
+
+  // S-07 예외 처리 — 현장 문제 등록
+  // 등록 완료 화면은 S-07 안의 상태입니다. S-08로 넘어간 뒤에는 걸리면 안 됩니다.
+  if (index === 6 && exSent) return (
+    <div className="phone-screen staff">
+      <PhoneHeader title="현장 문제 등록" back={()=>setExSent(false)} staff/>
+      <div className="screen-scroll bottom-space center-content sent-state">
+        <div className="success-mark">✓</div>
+        <h1>문제를<br/>등록했어요</h1>
+        <p>담당 부서가 확인한 뒤 재배정 여부를 알려드립니다.</p>
+        <div className="detail-card" style={{ textAlign: "left", marginTop: 22 }}>
+          <div><span>발생 위치</span><b>{exCar} · {rackOf(exCar)} 보관대 · {exCell}</b></div>
+          <div><span>문제 유형</span><b>{exType}</b></div>
+          <div><span>현장 사진</span><b>{exPhoto ? "첨부 1장" : "없음"}</b></div>
+        </div>
+      </div>
+      <div className="sticky-action dual">
+        <button className="secondary" onClick={()=>{ setExSent(false); go(3); }}>위치도로</button>
+        <button className="primary dark" onClick={openReassign}>수동 재배정</button>
+      </div>
+    </div>
+  );
+
+  // S-08 수동 재배정 — 문제 등록 완료에서 이어집니다.
+  if (index === 7) return (
+    <div className="phone-screen staff">
+      <PhoneHeader title={reassign?.current?.itemId ? `#${reassign.current.itemId} 위치 변경` : "위치 변경"} back={()=>go(6)} staff/>
+      <div className="screen-scroll bottom-space">
+        <div className="ra-current">
+          <div><span>현재 위치</span><b>{reassign?.current?.label ?? `${exCar} ${exCell}`}</b></div>
+          <em>사용 불가</em>
+        </div>
+
+        {moved ? (
+          <div className="notice blue" style={{ marginTop: 14 }}>
+            <b>위치를 변경했습니다</b>
+            <p>{reassign?.candidates.find((c)=>c.slotId===pickedSlot)?.label ?? pickedSlot}로 옮기도록 기록했습니다. 적재 체크리스트에서 확인하세요.</p>
+          </div>
+        ) : <>
+          <div className="ra-head">
+            <h3>AI 추천 위치</h3>
+            <small>{reassignBusy ? "확인 중…" : "안전 조건 충족"}</small>
+          </div>
+
+          {reassignBusy && <div className="ra-skeleton"><i/><i/></div>}
+
+          {!reassignBusy && (reassign?.recommendations.length
+            ? reassign.recommendations.map((r) => (
+                <button key={r.slotId} className={`ra-pick ${pickedSlot === r.slotId ? "on" : ""}`} onClick={()=>setPickedSlot(r.slotId)}>
+                  <span className="ra-rank">{r.rank}순위</span>
+                  <span className="ra-copy"><b>{r.label}</b><small>{r.reason}</small></span>
+                  <i>{pickedSlot === r.slotId ? "●" : "○"}</i>
+                </button>
+              ))
+            : <div className="notice"><b>옮길 수 있는 칸이 없습니다</b><p>같은 하차역 구간에 조건을 만족하는 빈 칸이 없어요. 다른 열차편이나 특송으로 처리해주세요.</p></div>)}
+
+          {!reassignBusy && reassign && reassign.candidates.length > 0 && (
+            <div className="ra-grid">
+              {reassign.candidates
+                .filter((c) => c.slotId.startsWith(`${exCar.replace("호차","")}-`))
+                .map((c) => (
+                  <button key={c.slotId} className={`ra-cell ${c.selectable ? "open" : "shut"} ${pickedSlot === c.slotId ? "on" : ""}`}
+                    disabled={!c.selectable} onClick={()=>setPickedSlot(c.slotId)}>
+                    <b>{c.slotId.split("-").slice(1).join("-")}</b>
+                    <span>{c.selectable ? "선택 가능" : c.blockedReason}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+
+          <p className="ra-note">승객 배정 칸과 규격·무게가 맞지 않는 칸은 선택할 수 없습니다.</p>
+        </>}
+      </div>
+      <div className="sticky-action">
+        {moved
+          ? <button className="primary dark" onClick={()=>go(5)}>적재 체크리스트로</button>
+          : <button className="primary dark" disabled={!pickedSlot} style={!pickedSlot ? { opacity: .4 } : undefined} onClick={()=>setMoved(true)}>선택한 위치로 변경</button>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="phone-screen staff">
+      <PhoneHeader title="현장 문제 등록" back={()=>go(4)} staff/>
+      <div className="screen-scroll bottom-space">
+        <section className="ex-loc">
+          <div className="ex-loc-head"><span>발생 위치</span><b>{exCar} · {rackOf(exCar)} 보관대 · {exCell}</b></div>
+          <div className="ex-selects">
+            <label>
+              <span>호차</span>
+              <select value={exCar} onChange={(e)=>pickExCar(e.target.value)}>
+                {RACK_CARS.map(([c]) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>칸 번호</span>
+              <select value={exCell} onChange={(e)=>setExCell(e.target.value)}>
+                {Array.from({ length: SLOTS_PER_CAR }, (_, i) => `${rackOf(exCar)}-${String(i + 1).padStart(2, "0")}`)
+                  .map((id) => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <h3 className="ex-title">문제 유형</h3>
+        <div className="radio-list">
+          {ISSUE_TYPES.map((t) => (
+            <button key={t} className={exType === t ? "selected" : ""} onClick={()=>setExType(t)}>
+              <span>{exType === t ? "●" : "○"}</span>{t}
+            </button>
+          ))}
+        </div>
+
+        <h3 className="ex-title">현장 사진 <em>선택</em></h3>
+        {exPhoto
+          ? <div className="ex-photo"><img src={exPhoto} alt="현장 사진"/><button onClick={()=>exFileRef.current?.click()}>다시 첨부</button></div>
+          : <button className="ex-drop" onClick={()=>exFileRef.current?.click()}><i>+</i><b>문제 상황 사진 첨부</b></button>}
+        <p className="ex-hint">정상 적재 확인 사진은 필요하지 않습니다.</p>
+
+        <h3 className="ex-title">메모</h3>
+        <textarea value={exMemo} onChange={(e)=>setExMemo(e.target.value)} placeholder={`${exCell}에 미등록 검은색 캐리어가 있음`}/>
+        <input ref={exFileRef} type="file" accept="image/*" hidden onChange={onPickExPhoto}/>
+      </div>
+      <div className="sticky-action">
+        <button className="primary dark" onClick={()=>setExSent(true)}>문제 등록하기</button>
+      </div>
+    </div>
+  );
 }
 function Metric({ icon,label,value,note,warn }: {icon:IconName;label:string;value:string;note:string;warn?:boolean}) { return <div className={`metric-card ${warn?"warn":""}`}><Icon name={icon}/><span>{label}</span><b>{value}</b><small>{note}</small></div>; }
 
@@ -801,4 +1080,6 @@ const staffDescriptions = [
   "호차별 보관대(7호차 A · 9호차 B · 12호차 C · 14호차 D)의 칸 상태를 봅니다.",
   "선택한 칸의 좌석·하차역·규격 등 업무상 필요한 정보만 봅니다.",
   "AI 배치 결과로 만든 적재 체크리스트입니다. 실을 때마다 체크합니다.",
+  "현장에서 발견한 문제를 발생 위치·유형·사진·메모로 등록합니다.",
+  "사용할 수 없게 된 칸의 대체 위치를 AI가 순위로 제안하고 역무원이 확정합니다.",
 ];
