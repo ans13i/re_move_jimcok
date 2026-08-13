@@ -10,7 +10,26 @@ const passengerScreens = [
   ["P-04", "등록 가능 판정"], ["P-05", "배정 대기"], ["P-06", "위치 배정 완료"],
   ["P-07", "내 수하물 위치"], ["P-08", "QR 확인증"], ["P-09", "등록 관리"],
   ["P-10", "문제 신고"],
+  // 규격 초과로 일반 보관대를 못 쓰는 짐의 대체 경로. P-04에서 이어집니다.
+  ["P-11", "특송 이용 안내"],
 ] as const;
+
+/**
+ * 보관대가 있는 호차와 그 보관대 이름. lib/train.js의 LUGGAGE_CARS·CAR_RACK과 같아야 합니다.
+ * 화면의 시연용 더미값도 이 표를 기준으로 씁니다.
+ */
+const RACK_CARS = [
+  ["7호차", "A"], ["9호차", "B"], ["12호차", "C"], ["14호차", "D"],
+] as const;
+
+const rackOf = (car: string) => RACK_CARS.find(([c]) => c === car)?.[1] ?? "A";
+
+/** 규격 초과 시 연결할 외부 특송 서비스 */
+const EXPRESS_PARTNER = {
+  name: "짐캐리",
+  service: "KTX·SRT 특송",
+  url: "https://zimcarry.net/page/zim-ktxpass.php",
+} as const;
 
 const TICKET_STOPS = [
   ["광교", "17:23", "23분"],
@@ -175,19 +194,60 @@ function TrainCard({ dest, seatText, ticketKey }: { dest: string; seatText: stri
   );
 }
 
-function LockerMap({ staff = false, selected = "B-03", onSelect }: { staff?: boolean; selected?: string; onSelect?: (id: string) => void }) {
+function LockerMap({ staff = false, selected = "A-03", onSelect }: { staff?: boolean; selected?: string; onSelect?: (id: string) => void }) {
   const cells = staff
-    ? [{id:"B-01",type:"passenger",label:"승객 · 8C"},{id:"B-02",type:"passenger",label:"승객 · 11A"},{id:"B-03",type:"passenger",label:"승객 · 12A"},{id:"B-04",type:"empty",label:"여유"},{id:"B-05",type:"express-wait",label:"특송 #A13"},{id:"B-06",type:"express-done",label:"특송 #C21"}]
-    : ["B-01","B-02","B-03","B-04","B-05","B-06"].map(id => ({id,type:id === selected ? "mine" : "neutral",label:id === selected ? "내 수하물" : ""}));
-  return <div className="locker-map">{cells.map(c => <button key={c.id} className={`locker-cell ${c.type} ${selected === c.id ? "selected" : ""}`} onClick={() => onSelect?.(c.id)}><b>{c.id}</b><span>{c.label}</span>{c.type === "express-done" && <em>✓</em>}</button>)}</div>;
+    ? [{id:"A-01",type:"passenger",label:"승객 · 8C"},{id:"A-02",type:"passenger",label:"승객 · 11A"},{id:"A-03",type:"passenger",label:"승객 · 12A"},{id:"A-04",type:"empty",label:"여유"},{id:"A-05",type:"express-wait",label:"특송 #A13"},{id:"A-06",type:"express-done",label:"특송 #C21"}]
+    : ["A-01","A-02","A-03","A-04","A-05","A-06"].map(id => ({id,type:id === selected ? "mine" : "neutral",label:id === selected ? "내 수하물" : ""}));
+  return <div className="locker-map">{cells.map(c => <button key={c.id} className={`locker-cell ${c.type} ${selected === c.id ? "selected" : ""}`} onClick={() => onSelect?.(c.id)}><b>{c.id}</b><span>{c.label}</span></button>)}</div>;
 }
 
 const STAFF_NAV = [["home","home","홈"],["trains","train","열차"],["scan","scan","스캔"],["issues","warn","문제"]] as const;
 const PASSENGER_NAV = [["book","train","승차권예매"],["discount","discount","할인·정기권"],["tour","tour","관광상품"],["ticket","ticket","승차권확인"]] as const;
 
+/** 적재율 구간. app.js가 실제 배정 결과로 갱신하기 전에는 idle입니다. */
+const LOAD_LEVELS = [
+  ["free", "여유"], ["normal", "보통"], ["busy", "혼잡"], ["full", "거의 만석"],
+] as const;
+
+/**
+ * S-04 상단 열차 도식. 호차를 눌러 보관대를 고릅니다.
+ *
+ * 적재율은 React가 모르므로 칸마다 data-app 훅만 심어두고, app.js가 배정 결과의
+ * capacity.byCar를 읽어 퍼센트와 data-level을 채웁니다. 배정 전에는 "—"입니다.
+ */
+function TrainMap({ selected, onSelect }: { selected: string; onSelect: (car: string) => void }) {
+  return (
+    <div className="train-map">
+      <div className="train-strip">
+        {RACK_CARS.map(([car]) => {
+          const no = car.replace("호차", "");
+          return (
+            <button key={car} className={`train-car ${selected === car ? "on" : ""}`} data-level="idle" data-app-car={no} onClick={() => onSelect(car)}>
+              <span className="tc-badge"><b>{car}</b><i data-app={`load-${no}`}>—</i></span>
+              <span className="tc-stem" aria-hidden="true"></span>
+              <span className="tc-body">
+                <span className="tc-windows" aria-hidden="true">{Array.from({ length: 5 }, (_, i) => <i key={i}/>)}</span>
+                <span className="tc-rack" aria-hidden="true">{Array.from({ length: SLOTS_PER_CAR }, (_, i) => <i key={i}/>)}</span>
+              </span>
+              <span className="tc-wheels" aria-hidden="true"><i/><i/></span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="train-rail" aria-hidden="true"></div>
+      <div className="train-legend">
+        {LOAD_LEVELS.map(([key, label]) => <span key={key}><i data-level={key}/>{label}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/** 보관대 한 대의 칸 수. lib/train.js의 SLOTS_PER_RACK과 같아야 합니다. */
+const SLOTS_PER_CAR = 6;
+
 function BottomNav({ active = "ticket", staff = false }: { active?: string; staff?: boolean }) {
-  if (staff) return <nav className="bottom-nav">{STAFF_NAV.map(([id,icon,label]) => <span key={id} className={active === id ? "active" : ""}><i>{icon}</i>{label}</span>)}</nav>;
-  return <nav className="bottom-nav korail-nav">{PASSENGER_NAV.map(([id,icon,label]) => <span key={id} className={active === id ? "active" : ""}><i><KrlIcon name={icon}/></i>{label}</span>)}</nav>;
+  const items = staff ? STAFF_NAV : PASSENGER_NAV;
+  return <nav className="bottom-nav korail-nav">{items.map(([id,icon,label]) => <span key={id} className={active === id ? "active" : ""}><i><KrlIcon name={icon}/></i>{label}</span>)}</nav>;
 }
 
 /** P-01 수하물 위치 칸의 세 가지 상태 */
@@ -485,19 +545,106 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
 
   if (index === 3) return <div className="phone-screen"><PhoneHeader title="수하물 정보 입력" back={() => go(2)}/><div className="screen-scroll bottom-space"><div className="mini-trip">KTX 123 · 서울 → {dest} <span>{seatText}</span></div><FormSection number="1" title="수하물 크기"><div className="choice-grid three">{SIZE_OPTIONS.map(([key, name, hint])=><button key={key} className={size===key?"chosen":""} onClick={()=>setSize(key)}>{name}<small>{hint}</small></button>)}</div>{size==="custom" && <><div className="dim-grid">{DIM_FIELDS.map(([key, label])=><label key={key}><span>{label} (cm)</span><input type="number" inputMode="numeric" min="10" max="200" value={dims[key]} onChange={(e)=>setDims((prev)=>({...prev, [key]: e.target.value}))}/></label>)}</div><p className={custom.longestCm>75?"dim-note over":"dim-note"}>부피 {custom.volumeL}L · 최장변 {custom.longestCm}cm{custom.longestCm>75 ? " · 특대형으로 분류돼 하단 칸에 배정돼요" : " · 대형"}</p></>}<p className="hint">바퀴와 손잡이를 포함한 가장 긴 길이를 기준으로 선택해주세요.</p></FormSection><FormSection number="2" title="예상 무게"><div className="choice-grid">{WEIGHT_OPTIONS.map(([key, name])=><button key={key} className={weight===key?"chosen":""} onClick={()=>setWeight(key)}>{name}</button>)}</div></FormSection><label className="consent"><input type="checkbox" defaultChecked/> 수하물 정보가 실제 수하물과 일치합니다.</label></div><div className="sticky-action"><button className="primary" onClick={() => go(4)}>등록 가능 여부 확인</button></div></div>;
 
+  // 규격 초과 — 일반 보관대를 못 쓰므로 판정 화면 대신 특송 안내로 이어지는 결과 화면을 냅니다.
+  if (index === 4 && tooBig) return (
+    <div className="phone-screen">
+      <PhoneHeader title="수하물 등록 결과" back={() => go(3)}/>
+      <div className="screen-scroll bottom-space">
+        <div className="ovr-trip"><span>KTX 123 · 서울 → {dest}</span><span>{seatText}</span></div>
+
+        <div className="ovr-hero">
+          <span className="ovr-mark warn"><KrlIcon name="warn"/></span>
+          <h1>일반 수하물 보관대<br/>이용이 어려워요</h1>
+          <p>입력하신 수하물은 크기 또는 무게가 커<br/><strong>열차 내 일반 수하물 보관공간에 배정할 수 없습니다.</strong></p>
+        </div>
+
+        <section className="ovr-card">
+          <h3>입력한 수하물</h3>
+          <div className="ovr-metrics">
+            {size === "custom"
+              ? DIM_FIELDS.map(([key, label]) => <div key={key}><span>{label}</span><b>{cm(dims[key])} cm</b></div>)
+              : [["크기", bag.sizeName], ["개수", `${count}개`], ["부피", `${spec.volumeL} L`]].map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}
+            <div><span>예상 무게</span><b>{bag.weightName}</b></div>
+          </div>
+          <p className="ovr-alert">일반 수하물 보관 기준을 초과했습니다 · 부피 {spec.volumeL}L / 보관대 한 칸 최대 {MAX_SLOT_L}L</p>
+        </section>
+
+        <section className="ovr-card blue">
+          <div className="ovr-pitch">
+            <span className="ovr-chip"><KrlIcon name="box"/></span>
+            <div><h2>큰 짐은 특송으로 보내실 수 있어요</h2><p>직접 가지고 탑승하기 어려운 대형 수하물은 철도 특송 등 별도 운송 서비스를 이용해주세요.</p></div>
+          </div>
+          <ul className="ovr-bullets">
+            <li>일반 보관대에 들어가지 않는 대형 수하물</li>
+            <li>안전하게 적재하기 어려운 중량 수하물</li>
+            <li>객실 통행이나 출입에 방해가 될 수 있는 수하물</li>
+          </ul>
+        </section>
+      </div>
+      <div className="sticky-action stacked">
+        <button className="primary" onClick={() => go(11)}>특송으로 보내기</button>
+        <div className="ovr-links">
+          <button className="text-link" onClick={() => go(3)}>수하물 크기 다시 입력</button>
+          <button className="text-link" onClick={() => go(1)}>승차권으로 돌아가기</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // P-11 특송 이용 안내 — 규격 초과 결과에서 "특송으로 보내기"로 넘어옵니다.
+  if (index === 11) return (
+    <div className="phone-screen">
+      <PhoneHeader title="특송 이용 안내" back={() => go(4)}/>
+      <div className="screen-scroll bottom-space">
+        <div className="ovr-trip"><span>KTX 123 · 서울 → {dest}</span><span>{seatText}</span></div>
+
+        <div className="ovr-hero">
+          <span className="ovr-mark box"><KrlIcon name="box"/></span>
+          <h1>이 수하물을<br/>특송으로 보내시겠어요?</h1>
+          <p>일반 수하물 보관대 이용이 어려운 짐은<br/><strong>{EXPRESS_PARTNER.service} 서비스로 별도 운송</strong>할 수 있어요.</p>
+        </div>
+
+        <section className="ovr-card">
+          <h3>이용 정보</h3>
+          <div className="ovr-rows">
+            <div><span>출발역</span><b>서울역</b></div>
+            <div><span>도착역</span><b>{dest}역</b></div>
+            <div><span>열차</span><b>KTX 123</b></div>
+            <div><span>수하물</span><b>{size === "custom" ? `${cm(dims.w)} × ${cm(dims.h)} × ${cm(dims.d)}cm` : `${bag.sizeName} · ${spec.volumeL}L`}<br/>{bag.weightName}</b></div>
+          </div>
+        </section>
+
+        <section className="ovr-card">
+          <div className="ovr-partner">
+            <span className="ovr-logo">짐<br/>캐리</span>
+            <div><b>{EXPRESS_PARTNER.service} · {EXPRESS_PARTNER.name}</b><p>출발역·도착역과 수하물 정보를 바탕으로 실제 이용 가능 여부를 확인해주세요.</p></div>
+          </div>
+          <p className="ovr-notice"><strong>안내</strong><br/>특송 서비스의 실제 접수 가능 여부, 요금 및 제한 규격은 연계 서비스의 운영 기준에 따라 달라질 수 있습니다.</p>
+        </section>
+      </div>
+      <div className="sticky-action stacked">
+        {/* 외부 제휴 서비스로 나가므로 새 탭에서 엽니다. */}
+        <a className="primary ovr-cta" href={EXPRESS_PARTNER.url} target="_blank" rel="noopener noreferrer">{EXPRESS_PARTNER.name}에서 이용 가능 여부 확인</a>
+        <div className="ovr-links">
+          <button className="text-link" onClick={() => go(4)}>수하물 등록 결과로 돌아가기</button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (index === 4) return <div className="phone-screen"><PhoneHeader title="등록 가능 여부" back={() => go(3)}/><div className="screen-scroll bottom-space center-content"><div className={tooBig?"success-mark bad":"success-mark"}>{tooBig ? "!" : "✓"}</div><span className="eyebrow">{tooBig ? "AI 규격 확인 결과" : "AI 규격 확인 완료"}</span><h1>{tooBig ? <>등록할 수 없는<br/>수하물이에요</> : <>등록할 수 있는<br/>수하물이에요</>}</h1><p>{tooBig ? `부피 ${spec.volumeL}L로 보관대 한 칸(최대 ${MAX_SLOT_L}L)을 넘어요. 치수를 다시 확인해주세요.` : "출발 30분 전에 좌석과 가까운 보관 위치를 안내해드릴게요."}</p><div className="summary-card"><div className="case-thumb"><KrlIcon name="bag"/></div><div><small>등록 수하물</small><b>{bag.sizeName} 수하물</b><span>{bag.weightName}</span></div></div><div className="ai-reason"><Icon name="sparkle"/><p>{tooBig ? <><b>등록 전에 수정이 필요해요</b><br/>가로·세로·높이를 줄이거나 크기 등급을 다시 골라주세요.</> : <><b>{spec.isXLarge ? "아래쪽 칸으로 우선 배정해요" : "위쪽 칸으로 배정해요"}</b><br/>부피 {spec.volumeL}L · 무게와 이동 안전성을 함께 고려합니다.</>}</p></div></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(3)}>정보 수정</button><button className="primary" disabled={tooBig} style={tooBig?{opacity:.4}:undefined} onClick={() => { if (!tooBig) { registerBag(); go(5); } }}>{tooBig ? "등록 불가" : "이 정보로 등록하기"}</button></div></div>;
 
   if (index === 5) return <div className="phone-screen"><PhoneHeader title="수하물 등록" back={() => go(1)}/><div className="screen-scroll bottom-space"><div className="status-hero waiting"><div className="clock-ring"><KrlIcon name="clock"/></div><span className="pill amber">{allocated ? "AI 배정 진행" : "배정 대기"}</span><h1>수하물 등록이<br/>완료됐어요</h1><p>좌석 위치와 전체 수하물 현황을 고려해 출발 30분 전부터 배정합니다.</p></div>{!allocated && <div className="notice blue"><b>아직 배정 전이에요</b><p>등록된 승차권 {tickets.filter((t)=>t.bag).length}건을 모아 출발 30분 전에 한 번에 배정합니다. 승차권을 더 등록하려면 예매 화면으로 돌아가세요.</p></div>}<div className="detail-card"><div><span>등록 수하물</span><b>{bag.sizeName} 수하물</b></div><div><span>승차권 번호</span><b>{ticket?.key ?? "-"}</b></div><div><span>위치 안내 예정</span><b className="blue-text">오늘 오후 4:30</b></div></div><div className="push-note"><Icon name="bell"/><p><b>앱 알림으로 알려드릴게요</b><br/>출발 30분 전까지 수정하거나 취소할 수 있어요.</p></div><button className="demo-link" onClick={() => setAllocated(true)}>{allocated ? "배정 진행 중…" : "발표 시연: 출발 30분 전으로 건너뛰기 →"}</button></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(9)}>등록 정보 보기</button><button className="primary" onClick={() => { if (!allocated) setAllocated(true); else go(6); }}>{allocated ? "배정 결과 보기" : "출발 30분 전 · AI 배정 시작"}</button></div></div>;
 
-  if (index === 6) return <div className="phone-screen"><PhoneHeader title="수하물 위치 안내" back={() => go(5)}/><div className="screen-scroll bottom-space"><div className="status-banner success">✓ 위치 배정 완료 <span>8번 승강장</span></div><div className="assigned-hero"><span>KTX 123 · 7호차 12A</span><h1>수하물 위치가<br/>배정됐어요</h1><p>탑승 후 아래 위치에 수하물을 놓아주세요.</p></div><div className="location-card"><small>7호차 · B 수하물 보관대</small><b>B-03</b><span>좌석 12A에서 뒤쪽 출입문 방향</span></div><div className="notice blue"><b>배정된 위치를 이용해주세요</b><p>다른 위치에 보관하면 하차 시 혼선이 생길 수 있어요.</p></div></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(8)}>수하물 QR</button><button className="primary" onClick={() => go(7)}>배정 위치 보기</button></div></div>;
+  if (index === 6) return <div className="phone-screen"><PhoneHeader title="수하물 위치 안내" back={() => go(5)}/><div className="screen-scroll bottom-space"><div className="status-banner success">✓ 위치 배정 완료 <span>8번 승강장</span></div><div className="assigned-hero"><span>KTX 123 · 7호차 12A</span><h1>수하물 위치가<br/>배정됐어요</h1><p>탑승 후 아래 위치에 수하물을 놓아주세요.</p></div><div className="location-card"><small>7호차 · A 수하물 보관대</small><b>A-03</b><span>좌석 12A에서 뒤쪽 출입문 방향</span></div><div className="notice blue"><b>배정된 위치를 이용해주세요</b><p>다른 위치에 보관하면 하차 시 혼선이 생길 수 있어요.</p></div></div><div className="sticky-action dual"><button className="secondary" onClick={() => go(8)}>수하물 QR</button><button className="primary" onClick={() => go(7)}>배정 위치 보기</button></div></div>;
 
-  if (index === 7) return <div className="phone-screen"><PhoneHeader title="내 수하물 위치" back={() => go(6)}/><div className="tabbar"><button className={locationTab === "car" ? "active" : ""} onClick={() => setLocationTab("car")}>객차 위치</button><button className={locationTab === "rack" ? "active" : ""} onClick={() => setLocationTab("rack")}>보관대 위치</button></div><div className="screen-scroll bottom-space">{locationTab === "car" ? <><div className="section-copy"><span className="eyebrow">7호차 내부</span><h1>12A 좌석에서<br/>뒤쪽으로 이동하세요</h1><p>B 보관대는 뒤쪽 출입문 바로 앞에 있어요.</p></div><div className="car-map"><div className="door">출입문</div><div className="rack-point">B 보관대<br/><b>B-03</b></div><div className="seat-grid">{["9A","9B","10A","10B","11A","11B","12A","12B"].map(x=><span key={x} className={x==="12A"?"my-seat":""}>{x}</span>)}</div><div className="path-arrow">↑ 이동 방향</div></div></> : <><div className="section-copy"><span className="eyebrow">B 수하물 보관대</span><h1><strong>B-03</strong> 칸에<br/>수하물을 놓아주세요</h1><p>다른 칸의 사용 여부는 표시되지 않아요.</p></div><LockerMap/><div className="rack-label-photo"><span>B-03</span><p><b>실제 보관대의 위치 번호를 확인하세요</b><br/>파란색 번호 스티커가 붙어 있어요.</p></div></>}<button className="danger-link" onClick={() => go(10)}>배정 위치를 사용할 수 없어요</button></div></div>;
+  if (index === 7) return <div className="phone-screen"><PhoneHeader title="내 수하물 위치" back={() => go(6)}/><div className="tabbar"><button className={locationTab === "car" ? "active" : ""} onClick={() => setLocationTab("car")}>객차 위치</button><button className={locationTab === "rack" ? "active" : ""} onClick={() => setLocationTab("rack")}>보관대 위치</button></div><div className="screen-scroll bottom-space">{locationTab === "car" ? <><div className="section-copy"><span className="eyebrow">7호차 내부</span><h1>12A 좌석에서<br/>뒤쪽으로 이동하세요</h1><p>A 보관대는 뒤쪽 출입문 바로 앞에 있어요.</p></div><div className="car-map"><div className="door">출입문</div><div className="rack-point">A 보관대<br/><b>A-03</b></div><div className="seat-grid">{["9A","9B","10A","10B","11A","11B","12A","12B"].map(x=><span key={x} className={x==="12A"?"my-seat":""}>{x}</span>)}</div><div className="path-arrow">↑ 이동 방향</div></div></> : <><div className="section-copy"><span className="eyebrow">A 수하물 보관대</span><h1><strong>A-03</strong> 칸에<br/>수하물을 놓아주세요</h1><p>다른 칸의 사용 여부는 표시되지 않아요.</p></div><LockerMap/><div className="rack-label-photo"><span>A-03</span><p><b>실제 보관대의 위치 번호를 확인하세요</b><br/>파란색 번호 스티커가 붙어 있어요.</p></div></>}<button className="danger-link" onClick={() => go(10)}>배정 위치를 사용할 수 없어요</button></div></div>;
 
-  if (index === 8) return <div className="phone-screen"><PhoneHeader title="수하물 확인증" back={() => go(6)}/><div className="screen-scroll"><div className="qr-ticket"><div className="qr-status">등록 완료 · 위치 배정 완료</div><div className="qr-code" aria-label="시연용 QR 코드"><span className="qr-blocks">{qrCells(ticket?.key ?? "JIMKKOK").map((on, i) => <i key={i} className={on ? "on" : ""}/>)}</span></div><h2>BAG-240812-017</h2><div className="qr-info"><p><span>열차</span><b>KTX 123 · 7호차 12A</b></p><p><span>구간</span><b>서울 → {dest}</b></p><p><span>수하물</span><b>{bag.sizeName}</b></p><p><span>배정 위치</span><b className="blue-text">B-03</b></p></div></div><p className="center-note">역무원의 확인 요청이 있을 때 보여주세요.<br/><b>탑승할 때마다 스캔할 필요는 없습니다.</b></p><button className="secondary full"><KrlIcon name="sun"/> 화면 밝게 보기</button></div></div>;
+  if (index === 8) return <div className="phone-screen"><PhoneHeader title="수하물 확인증" back={() => go(6)}/><div className="screen-scroll"><div className="qr-ticket"><div className="qr-status">등록 완료 · 위치 배정 완료</div><div className="qr-code" aria-label="시연용 QR 코드"><span className="qr-blocks">{qrCells(ticket?.key ?? "JIMKKOK").map((on, i) => <i key={i} className={on ? "on" : ""}/>)}</span></div><h2>—</h2><div className="qr-info"><p><span>열차</span><b>KTX 123 · 7호차 12A</b></p><p><span>구간</span><b>서울 → {dest}</b></p><p><span>수하물</span><b>{bag.sizeName}</b></p><p><span>배정 위치</span><b className="blue-text">A-03</b></p></div></div><p className="center-note">역무원의 확인 요청이 있을 때 보여주세요.<br/><b>탑승할 때마다 스캔할 필요는 없습니다.</b></p><button className="secondary full"><KrlIcon name="sun"/> 화면 밝게 보기</button></div></div>;
 
-  if (index === 9) return <div className="phone-screen"><PhoneHeader title="수하물 등록 정보" back={() => go(5)}/><div className="screen-scroll bottom-space"><div className="status-banner waiting"><KrlIcon name="clock"/> 배정 대기 <span>오후 4:30 배정 예정</span></div><div className="registered-photo"><div><KrlIcon name="bag"/></div><span><b>{bag.sizeName} 캐리어</b><br/>{bag.weightName}</span></div><div className="detail-card"><div><span>등록번호</span><b>BAG-240812-017</b></div><div><span>승차 정보</span><b>KTX 123 · 7호차 12A</b></div><div><span>등록 마감</span><b>오후 4:30</b></div></div><div className="notice"><b>마감 전까지 변경할 수 있어요</b><p>위치 배정이 시작되면 앱에서 수정하거나 취소할 수 없습니다.</p></div></div><div className="sticky-action stacked"><button className="primary" onClick={() => go(3)}>수하물 정보 수정</button><button className="danger-link" onClick={() => setCancelOpen(true)}>등록 취소</button></div>{cancelOpen && <div className="modal-backdrop"><div className="modal"><h2>수하물 등록을 취소할까요?</h2><p>취소하면 배정 예정 공간이 해제됩니다.</p><div><button className="secondary" onClick={() => setCancelOpen(false)}>계속 등록</button><button className="danger-button" onClick={() => {setCancelOpen(false);cancelBag();go(1)}}>등록 취소</button></div></div></div>}</div>;
+  if (index === 9) return <div className="phone-screen"><PhoneHeader title="수하물 등록 정보" back={() => go(5)}/><div className="screen-scroll bottom-space"><div className="status-banner waiting"><KrlIcon name="clock"/> 배정 대기 <span>오후 4:30 배정 예정</span></div><div className="registered-photo"><div><KrlIcon name="bag"/></div><span><b>{bag.sizeName} 캐리어</b><br/>{bag.weightName}</span></div><div className="detail-card"><div><span>등록번호</span><b>{ticket ? `BAG-${ticket.key}` : "—"}</b></div><div><span>승차 정보</span><b>KTX 123 · {seatText}</b></div><div><span>등록 마감</span><b>오후 4:30</b></div></div><div className="notice"><b>마감 전까지 변경할 수 있어요</b><p>위치 배정이 시작되면 앱에서 수정하거나 취소할 수 없습니다.</p></div></div><div className="sticky-action stacked"><button className="primary" onClick={() => go(3)}>수하물 정보 수정</button><button className="danger-link" onClick={() => setCancelOpen(true)}>등록 취소</button></div>{cancelOpen && <div className="modal-backdrop"><div className="modal"><h2>수하물 등록을 취소할까요?</h2><p>취소하면 배정 예정 공간이 해제됩니다.</p><div><button className="secondary" onClick={() => setCancelOpen(false)}>계속 등록</button><button className="danger-button" onClick={() => {setCancelOpen(false);cancelBag();go(1)}}>등록 취소</button></div></div></div>}</div>;
 
-  return <div className="phone-screen"><PhoneHeader title="어떤 문제가 있나요?" back={() => {setSent(false);go(7)}}/><div className="screen-scroll bottom-space">{sent ? <div className="center-content sent-state"><div className="success-mark">✓</div><h1>도움 요청을<br/>보냈어요</h1><p>7호차 담당 승무원이 확인할 예정입니다.</p><div className="notice blue"><b>잠시 직접 보관해주세요</b><p>수하물은 통로나 출입문에 두지 마세요.</p></div></div> : <><div className="section-copy"><span className="eyebrow">7호차 · B 보관대 · B-03</span><h1>불편한 상황을<br/>선택해주세요</h1></div><div className="radio-list">{["다른 수하물이 놓여 있어요","보관대 위치를 찾기 어려워요","수하물이 배정 칸에 들어가지 않아요","보관대가 파손되어 있어요"].map(x=><button key={x} className={issue===x?"selected":""} onClick={()=>setIssue(x)}><span>{issue===x?"●":"○"}</span>{x}</button>)}</div><div className="notice"><b>가까운 승무원에게 전달돼요</b><p>선택한 내용과 배정 위치만 전달합니다.</p></div></>}</div><div className="sticky-action">{sent?<button className="primary" onClick={()=>{setSent(false);go(7)}}>내 수하물 위치로 돌아가기</button>:<button className="primary" onClick={()=>setSent(true)}>도움 요청 보내기</button>}</div></div>;
+  return <div className="phone-screen"><PhoneHeader title="어떤 문제가 있나요?" back={() => {setSent(false);go(7)}}/><div className="screen-scroll bottom-space">{sent ? <div className="center-content sent-state"><div className="success-mark">✓</div><h1>도움 요청을<br/>보냈어요</h1><p>7호차 담당 승무원이 확인할 예정입니다.</p><div className="notice blue"><b>잠시 직접 보관해주세요</b><p>수하물은 통로나 출입문에 두지 마세요.</p></div></div> : <><div className="section-copy"><span className="eyebrow">7호차 · A 보관대 · A-03</span><h1>불편한 상황을<br/>선택해주세요</h1></div><div className="radio-list">{["다른 수하물이 놓여 있어요","보관대 위치를 찾기 어려워요","수하물이 배정 칸에 들어가지 않아요","보관대가 파손되어 있어요"].map(x=><button key={x} className={issue===x?"selected":""} onClick={()=>setIssue(x)}><span>{issue===x?"●":"○"}</span>{x}</button>)}</div><div className="notice"><b>가까운 승무원에게 전달돼요</b><p>선택한 내용과 배정 위치만 전달합니다.</p></div></>}</div><div className="sticky-action">{sent?<button className="primary" onClick={()=>{setSent(false);go(7)}}>내 수하물 위치로 돌아가기</button>:<button className="primary" onClick={()=>setSent(true)}>도움 요청 보내기</button>}</div></div>;
 }
 
 /** P-02 안내 카드의 한 줄. InfoRow와 달리 원형 테두리 SVG 아이콘을 씁니다. */
@@ -513,7 +660,7 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
   const go = (n: number) => { if (n >= 0 && n < staffScreens.length) rawGo(n); };
   const [filter, setFilter] = useState("전체");
   const [car, setCar] = useState("7호차");
-  const [selectedCell, setSelectedCell] = useState("B-03");
+  const [selectedCell, setSelectedCell] = useState("A-03");
   const [confirmed, setConfirmed] = useState(false);
   const [prepared, setPrepared] = useState(["A13","A14","C21","B07"]);
   const [scanStage, setScanStage] = useState(0);
@@ -522,15 +669,15 @@ function StaffScreen({ index, go: rawGo, dest }: { index: number; go: (n: number
 
   if (index === 0) return <div className="phone-screen staff"><PhoneHeader title="오늘의 적재 업무" staff/><div className="screen-scroll"><div className="work-date"><span>8월 13일 · 서울역</span><button>필터<KrlIcon name="chevronDown"/></button></div><div className="summary-strip"><div><b>3</b><span>담당 열차</span></div><div><b>1</b><span>검토 필요</span></div><div><b>8</b><span>특송 건수</span></div></div><div className="section-title"><h3>지금 확인할 열차</h3><span>출발 순</span></div><div className="staff-train-card urgent"><div className="card-status"><span className="pill red">검토 필요</span><small>출발 24분 전</small></div><h2>KTX 123 · 서울 → 부산</h2><p>17:00 출발 · 8번 승강장</p><div className="staff-metrics"><span>승객 수하물 <b>34개</b></span><span>특송 <b>8건</b></span><span>확인 필요 <b className="red-text">1건</b></span></div><button className="primary" onClick={()=>go(1)}>운영 현황 보기</button></div><div className="staff-train-card"><div className="card-status"><span className="pill orange">특송 준비</span><small>출발 54분 전</small></div><h2>KTX 231 · 서울 → 광주송정</h2><p>17:30 출발 · 승강장 미정</p></div></div><BottomNav staff active="home"/></div>;
 
-  if (index === 1) return <div className="phone-screen staff"><PhoneHeader title="열차 운영 요약" back={()=>go(0)} staff/><div className="screen-scroll bottom-space"><div className="staff-route"><span>KTX 123 · 서울 → 부산</span><b>열차 도착까지 <strong>14분</strong></b></div><div className="metric-grid"><Metric icon="bag" label="승객 대형 수하물" value="34개" note="배정 완료"/><Metric icon="slot" label="사용 가능 잔여 공간" value="1.42㎥" note="8칸"/><Metric icon="box" label="특송 화물" value="7건" note="1건 미배정" warn/><Metric icon="warn" label="현장 확인 필요" value="1건" note="즉시 확인" warn/></div><div className="warning-card"><Icon name="warn"/><p><b>9호차 A-02 사용 불가</b><br/>특송 1건을 다른 위치로 재배정해주세요.</p><button onClick={()=>go(9)}>재배정</button></div><div className="section-title"><h3>운영 메뉴</h3></div><div className="operation-list"><button onClick={()=>go(2)}><Icon name="sparkle"/><span><b>AI 배정안 검토</b><small>자동 배정 40건 · 확인 필요 1건</small></span><em>›</em></button><button onClick={()=>go(3)}><Icon name="grid"/><span><b>전체 적재 위치도</b><small>객차·보관대별 배정 상태 확인</small></span><em>›</em></button><button onClick={()=>go(5)}><Icon name="list"/><span><b>객차별 준비 시작</b><small>특송 7건을 적재 위치별로 분류</small></span><em>›</em></button></div></div><div className="sticky-action"><button className="primary dark" onClick={()=>go(2)}>AI 배정안 검토</button></div></div>;
+  if (index === 1) return <div className="phone-screen staff"><PhoneHeader title="열차 운영 요약" back={()=>go(0)} staff/><div className="screen-scroll bottom-space"><div className="staff-route"><span>KTX 123 · 서울 → 부산</span><b>열차 도착까지 <strong>14분</strong></b></div><div className="metric-grid"><Metric icon="bag" label="승객 대형 수하물" value="34개" note="배정 완료"/><Metric icon="slot" label="사용 가능 잔여 공간" value="1.42㎥" note="8칸"/><Metric icon="box" label="특송 화물" value="7건" note="1건 미배정" warn/><Metric icon="warn" label="현장 확인 필요" value="1건" note="즉시 확인" warn/></div><div className="warning-card"><Icon name="warn"/><p><b>9호차 B-02 사용 불가</b><br/>특송 1건을 다른 위치로 재배정해주세요.</p><button onClick={()=>go(9)}>재배정</button></div><div className="section-title"><h3>운영 메뉴</h3></div><div className="operation-list"><button onClick={()=>go(2)}><Icon name="sparkle"/><span><b>AI 배정안 검토</b><small>자동 배정 40건 · 확인 필요 1건</small></span><em>›</em></button><button onClick={()=>go(3)}><Icon name="grid"/><span><b>전체 적재 위치도</b><small>객차·보관대별 배정 상태 확인</small></span><em>›</em></button><button onClick={()=>go(5)}><Icon name="list"/><span><b>객차별 준비 시작</b><small>특송 7건을 적재 위치별로 분류</small></span><em>›</em></button></div></div><div className="sticky-action"><button className="primary dark" onClick={()=>go(2)}>AI 배정안 검토</button></div></div>;
 
-  if (index === 2) return <div className="phone-screen staff"><PhoneHeader title="AI 배정안 검토" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="ai-review-head"><span className="ai-badge"><KrlIcon name="sparkle"/> AI 적재 최적화</span><h1>{confirmed ? "배정안이 확정됐습니다" : "확정 전 마지막으로\n확인해주세요"}</h1><p>{confirmed ? "승객 위치 안내를 발송하고 특송 준비 목록을 만들었어요." : "좌석 거리·무게·하차 동선을 반영한 결과입니다."}</p></div><div className="review-stats"><div><b>41</b><span>배정 가능</span></div><div><b className="blue-text">40</b><span>자동 배정</span></div><div><b className="red-text">1</b><span>확인 필요</span></div></div><div className="filter-row"><button className="active">전체 41</button><button>문제 항목 1</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>승객 · 7호차 12A</b><small>좌석과 가장 가까운 사용 가능 위치</small></div><strong>B-03</strong></div><div className="allocation-row alert"><span className="pill red">확인 필요</span><div><b>특송 #A13 · 서울 → 대전</b><small>9호차 A-02 · 사용 불가 위치</small></div><button onClick={()=>go(9)}>변경</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>특송 #C21 · 서울 → 동대구</b><small>같은 하차역 작업 동선 최적화</small></div><strong>7-B04</strong></div></div><div className="sticky-action dual"><button className="secondary" onClick={()=>go(3)}>위치도 보기</button><button className="primary dark" onClick={()=>setConfirmed(true)}>{confirmed ? "객차별 준비로 이동" : "배정안 확정"}</button></div></div>;
+  if (index === 2) return <div className="phone-screen staff"><PhoneHeader title="AI 배정안 검토" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="ai-review-head"><span className="ai-badge"><KrlIcon name="sparkle"/> AI 적재 최적화</span><h1>{confirmed ? "배정안이 확정됐습니다" : "확정 전 마지막으로\n확인해주세요"}</h1><p>{confirmed ? "승객 위치 안내를 발송하고 특송 준비 목록을 만들었어요." : "좌석 거리·무게·하차 동선을 반영한 결과입니다."}</p></div><div className="review-stats"><div><b>41</b><span>배정 가능</span></div><div><b className="blue-text">40</b><span>자동 배정</span></div><div><b className="red-text">1</b><span>확인 필요</span></div></div><div className="filter-row"><button className="active">전체 41</button><button>문제 항목 1</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>승객 · 7호차 12A</b><small>좌석과 가장 가까운 사용 가능 위치</small></div><strong>A-03</strong></div><div className="allocation-row alert"><span className="pill red">확인 필요</span><div><b>특송 #A13 · 서울 → 대전</b><small>9호차 B-02 · 사용 불가 위치</small></div><button onClick={()=>go(9)}>변경</button></div><div className="allocation-row"><span className="pill blue">정상</span><div><b>특송 #C21 · 서울 → 동대구</b><small>같은 하차역 작업 동선 최적화</small></div><strong>12-C04</strong></div></div><div className="sticky-action dual"><button className="secondary" onClick={()=>go(3)}>위치도 보기</button><button className="primary dark" onClick={()=>setConfirmed(true)}>{confirmed ? "객차별 준비로 이동" : "배정안 확정"}</button></div></div>;
 
-  if (index === 3) return <div className="phone-screen staff"><PhoneHeader title="전체 적재 위치도" back={()=>go(1)} staff/><div className="staff-filters">{["전체","승객","특송","여유","확인 필요"].map(x=><button key={x} className={filter===x?"active":""} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="screen-scroll"><div className="car-tabs">{["5호차","7호차","9호차","12호차"].map(x=><button key={x} className={car===x?"active":""} onClick={()=>setCar(x)}>{x}</button>)}</div><div className="map-heading"><div><span>{car} · B 보관대</span><h2>5/6칸 배정</h2></div><small>좌석 번호만 표시</small></div><LockerMap staff selected={selectedCell} onSelect={(id)=>{setSelectedCell(id);go(4)}}/><div className="legend"><span><i className="passenger-dot"></i>승객</span><span><i className="express-dot"></i>특송</span><span><i className="empty-dot"></i>여유</span></div><div className="alert-list"><b>확인 필요</b><button onClick={()=>go(9)}><span>9호차 A-02</span><em>사용 불가 · 특송 #A13 ›</em></button></div><div className="privacy-note">승객 이름은 표시하지 않으며 업무에 필요한 좌석 번호만 제공합니다.</div></div><BottomNav staff active="trains"/></div>;
+  if (index === 3) return <div className="phone-screen staff"><PhoneHeader title="전체 적재 위치도" back={()=>go(1)} staff/><div className="staff-filters">{["전체","승객","특송","여유","확인 필요"].map(x=><button key={x} className={filter===x?"active":""} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="screen-scroll"><TrainMap selected={car} onSelect={setCar}/><div className="map-heading"><div><span>{car} · {rackOf(car)} 보관대</span><h2>5/6칸 배정</h2></div><small>좌석 번호만 표시</small></div><LockerMap staff selected={selectedCell} onSelect={(id)=>{setSelectedCell(id);go(4)}}/><div className="legend"><span><i className="passenger-dot"></i>승객</span><span><i className="express-dot"></i>특송</span><span><i className="empty-dot"></i>여유</span></div><div className="alert-list"><b>확인 필요</b><button onClick={()=>go(9)}><span>9호차 A-02</span><em>사용 불가 · 특송 #A13 ›</em></button></div><div className="privacy-note">승객 이름은 표시하지 않으며 업무에 필요한 좌석 번호만 제공합니다.</div></div><BottomNav staff active="trains"/></div>;
 
-  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space"><div className="cell-detail-head"><span className="pill blue">승객 수하물</span><h1>{selectedCell}</h1><p>7호차 · B 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span>등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>7호차 12A</b></div><div><span>하차역</span><b>{dest}</b></div><div><span>규격</span><b>68 × 45 × 28cm · 17kg</b></div><div><span>등록번호</span><b>BAG-240812-017</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={()=>go(8)}>현장 문제 등록</button></div></div>;
+  if (index === 4) return <div className="phone-screen staff"><PhoneHeader title="칸 상세" back={()=>go(3)} staff/><div className="screen-scroll bottom-space">{/* 값은 전부 app.js가 선택한 칸의 배정 결과로 채웁니다. 등록 전에는 "—"입니다. */}<div className="cell-detail-head"><span className="pill blue" data-app="cell-kind">빈 칸</span><h1>{selectedCell}</h1><p>{car} · {rackOf(car)} 보관대</p></div><div className="luggage-photo"><div className="case-big"><KrlIcon name="bag"/></div><span data-app="cell-photo">등록된 수하물 사진</span></div><div className="detail-card"><div><span>좌석</span><b>—</b></div><div><span>하차역</span><b>—</b></div><div><span>규격</span><b>—</b></div><div><span>등록번호</span><b>—</b></div></div><div className="photo-policy"><Icon name="info"/><p>정상 적재에는 현장 사진이 필요하지 않습니다. 등록 사진은 식별이 필요할 때만 확인하세요.</p></div></div><div className="sticky-action stacked"><div className="dual"><button className="secondary">QR 확인</button><button className="primary dark" onClick={()=>go(9)}>다른 위치로 변경</button></div><button className="danger-link" onClick={()=>go(8)}>현장 문제 등록</button></div></div>;
 
-  return <div className="phone-screen staff"><PhoneHeader title="적재 체크리스트" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="progress-card"><div><span>적재 진행률</span><b>{prepared.length} / 7건</b></div><div className="progress"><i style={{width:`${prepared.length/7*100}%`}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>{[["5호차",[["A13","A-03","대전"],["A14","A-04","대전"]]],["7호차",[["C21","B-04","동대구"]]],["9호차",[["B07","A-04","부산"],["B08","A-05","부산"]]]].map(([c,rows])=><div className="prep-group" key={c as string}><h3>{c as string} <span>{(rows as string[][]).length}건</span></h3>{(rows as string[][]).map(([id,pos,dest])=><button key={id} onClick={()=>setPrepared(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])}><i className={prepared.includes(id)?"checked":""}>{prepared.includes(id)?"✓":""}</i><span><b>#{id} → {pos}</b><small>{dest} 하역</small></span><em>›</em></button>)}</div>)}</div><div className="sticky-action"><button className="primary dark" onClick={()=>go(1)}>적재 완료 처리</button></div></div>;
+  return <div className="phone-screen staff"><PhoneHeader title="적재 체크리스트" back={()=>go(1)} staff/><div className="screen-scroll bottom-space"><div className="progress-card"><div><span>적재 진행률</span><b>{prepared.length} / 7건</b></div><div className="progress"><i style={{width:`${prepared.length/7*100}%`}}></i></div><p>AI 배치 결과입니다. 실은 항목을 체크하세요.</p></div>{[["9호차",[["A13","B-03","대전"],["A14","B-04","대전"]]],["12호차",[["C21","C-04","동대구"]]],["14호차",[["B07","D-04","부산"],["B08","D-05","부산"]]]].map(([c,rows])=><div className="prep-group" key={c as string}><h3>{c as string} <span>{(rows as string[][]).length}건</span></h3>{(rows as string[][]).map(([id,pos,dest])=><button key={id} onClick={()=>setPrepared(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])}><i className={prepared.includes(id)?"checked":""}>{prepared.includes(id)?"✓":""}</i><span><b>#{id} → {pos}</b><small>{dest} 하역</small></span><em>›</em></button>)}</div>)}</div><div className="sticky-action"><button className="primary dark" onClick={()=>go(1)}>적재 완료 처리</button></div></div>;
 }
 function Metric({ icon,label,value,note,warn }: {icon:IconName;label:string;value:string;note:string;warn?:boolean}) { return <div className={`metric-card ${warn?"warn":""}`}><Icon name={icon}/><span>{label}</span><b>{value}</b><small>{note}</small></div>; }
 
@@ -645,12 +792,13 @@ const passengerDescriptions = [
   "역무원의 확인 요청이 있을 때만 제시하는 수하물 QR 확인증입니다.",
   "등록 마감 전 정보를 수정하거나 등록을 취소합니다.",
   "배정 칸 점유·파손 등의 문제를 선택해 담당 승무원에게 도움을 요청합니다.",
+  "규격 초과로 일반 보관대를 쓸 수 없는 짐을 외부 특송 서비스로 연결합니다.",
 ];
 const staffDescriptions = [
   "오늘 담당하는 열차와 등록·특송 현황을 한눈에 확인합니다.",
   "승객 수하물, 특송 적재 가능 공간, 확인 필요 건수를 봅니다.",
   "AI 배정의 검증 결과와 시도 기록을 확인하고 역무원이 최종 확정합니다.",
-  "호차별 보관대(5호차 A · 7호차 B · 9호차 C · 12호차 D)의 칸 상태를 봅니다.",
+  "호차별 보관대(7호차 A · 9호차 B · 12호차 C · 14호차 D)의 칸 상태를 봅니다.",
   "선택한 칸의 좌석·하차역·규격 등 업무상 필요한 정보만 봅니다.",
   "AI 배치 결과로 만든 적재 체크리스트입니다. 실을 때마다 체크합니다.",
 ];

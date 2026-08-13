@@ -485,7 +485,7 @@ bind("P-01 승차권 상세", () => {
 /**
  * 배정 결과가 아직 없을 때 승객 화면(P-06~P-08)의 원본 더미를 지웁니다.
  *
- * page.tsx에는 시연용으로 "7호차 12A · B-03" 같은 값이 박혀 있습니다.
+ * page.tsx에는 시연용으로 "7호차 12A · A-03" 같은 값이 박혀 있습니다.
  * 그대로 두면 배정 전에 들어왔을 때 진짜 배정처럼 보이므로 반드시 비웁니다.
  */
 function renderPassengerPending() {
@@ -726,8 +726,10 @@ function staffGate() {
 /** 아직 배정 전일 때 역무원 화면에 안내를 띄우고 숫자를 비웁니다. */
 /** 지금 선택된 호차. 탭이 없으면 첫 적재 호차. */
 function activeCar() {
-  const tab = $(".car-tabs button.active");
-  const n = tab ? Number(tab.textContent.replace(/\D/g, "")) : NaN;
+  // S-04는 열차 도식에서, 그 밖의 화면은 예전 호차 탭에서 선택 호차를 읽습니다.
+  const picked = $(".train-car.on") || $(".car-tabs button.active");
+  const raw = picked ? picked.getAttribute("data-app-car") || picked.textContent : "";
+  const n = Number(String(raw).replace(/\D/g, ""));
   return Number.isFinite(n) && CAR_RACK[n] ? n : Number(Object.keys(CAR_RACK)[0]);
 }
 
@@ -749,7 +751,7 @@ function paintRack(car) {
 /**
  * 위치도의 '확인 필요' 목록을 감춥니다.
  *
- * 원본 마크업에 박혀 있던 "9호차 A-02 사용 불가 · 특송 #A13"은 시연용 더미입니다.
+ * 원본 마크업에 박혀 있던 "9호차 B-02 사용 불가 · 특송 #A13"은 시연용 더미입니다.
  * 실제 위반은 S-03 검증 로그에서 보여주므로 여기서는 쓰지 않습니다.
  */
 function hideAlertList() {
@@ -1054,6 +1056,38 @@ bind("S-03 배정안 검토", () => {
 });
 
 // ── S-04 전체 적재 위치도: 호차·보관대별 배정 현황 ──
+/** 적재율(%) → 표시 구간. 열차 도식의 색과 범례가 이 기준을 씁니다. */
+function loadLevel(pct) {
+  if (pct >= 90) return "full";
+  if (pct >= 70) return "busy";
+  if (pct >= 40) return "normal";
+  return "free";
+}
+
+/**
+ * S-04 열차 도식에 실제 적재율을 채웁니다.
+ *
+ * React는 배정 결과를 모르므로 칸을 비운 채 그립니다. 여기서 호차별 사용률을
+ * 퍼센트·색·채운 칸 수로 바꿔 넣습니다. 배정 전에는 이 함수가 불리지 않습니다.
+ */
+function paintTrainMap(plan) {
+  const byCar = new Map((plan.capacity?.byCar ?? []).map((c) => [c.car, c]));
+
+  for (const el of $$(".train-car")) {
+    const car = Number(el.getAttribute("data-app-car"));
+    const info = byCar.get(car);
+    if (!info) continue;
+
+    const pct = Math.round(info.utilizationPct ?? 0);
+    setText(el.querySelector(`[data-app="load-${car}"]`), `${pct}%`);
+    setAttr(el, "data-level", loadLevel(pct));
+
+    // 채운 칸 수는 용적 사용률이 아니라 실제로 찬 칸 수로 보여줍니다.
+    const cells = $$(".tc-rack i", el);
+    cells.forEach((cell, i) => toggleClass(cell, "on", i < (info.usedSlots ?? 0)));
+  }
+}
+
 bind("S-04 적재 위치도", () => {
   if (screenId() !== "S-04") return;
 
@@ -1066,21 +1100,11 @@ bind("S-04 적재 위치도", () => {
   if (!staffGate()) return;
   const p = state.plan;
 
-  // 호차 탭을 실제 배정된 호차로
-  const cars = Object.keys(CAR_RACK).map(Number).sort((x, y) => x - y);
-  const tabs = $$(".car-tabs button");
-  tabs.forEach((btn, i) => {
-    if (cars[i] === undefined) {
-      hideEl(btn);
-    } else {
-      btn.style.display = "";
-      setText(btn, `${cars[i]}호차`);
-    }
-  });
+  paintTrainMap(p);
 
   const car = activeCar();
 
-  // 보관대 이름은 호차로 정해집니다. (5→A · 7→B · 9→C · 12→D)
+  // 보관대 이름은 호차로 정해집니다. (7→A · 9→B · 12→C · 14→D)
   const rack = paintRack(car);
   const inRack = p.allocations.filter((a) => a.car === car && a.rack === rack);
 
@@ -1109,7 +1133,7 @@ bind("S-04 적재 위치도", () => {
     }
   });
 
-  // 원본에 박혀 있던 "9호차 A-02 사용 불가" 더미는 쓰지 않습니다.
+  // 원본에 박혀 있던 "9호차 B-02 사용 불가" 더미는 쓰지 않습니다.
   // 실제 위반은 S-03 검증 로그가 담당합니다.
   hideAlertList();
 });
@@ -1123,6 +1147,39 @@ bind("S-05 칸 상세", () => {
     const b = $$(".sticky-action button").find((el) => el.textContent.trim() === label);
     hideEl(b);
   }
+
+  // 선택한 칸("A-03")과 호차를 머리말에서 읽어 그 칸의 배정을 찾습니다.
+  const cell = ($(".cell-detail-head h1")?.textContent ?? "").trim();
+  const car = Number((($(".cell-detail-head p")?.textContent ?? "").match(/(\d+)호차/) ?? [])[1]);
+  const index = Number((cell.split("-")[1] ?? "").replace(/\D/g, ""));
+
+  const a = (state.plan?.allocations ?? []).find(
+    (x) => x.car === car && x.index === index,
+  );
+
+  const kind = $('[data-app="cell-kind"]');
+  const photo = $('[data-app="cell-photo"]');
+
+  if (!a) {
+    // 배정 전이거나 빈 칸입니다. 하드코딩된 값처럼 보이지 않도록 전부 비웁니다.
+    setText(kind, state.plan ? "빈 칸" : "배정 전");
+    setText(photo, state.plan ? "등록된 수하물 없음" : "배정 전");
+    for (const label of ["좌석", "하차역", "규격", "등록번호"]) setText(byLabel(label), "—");
+    return;
+  }
+
+  const freight = a.kind === "freight";
+  const d = a.dimensions;
+
+  setText(kind, freight ? "특송 화물" : "승객 수하물");
+  setText(photo, freight ? "특송 화물" : "등록된 수하물");
+  setText(byLabel("좌석"), freight ? "특송 · 좌석 없음" : `${a.seatCar}호차 ${a.seat ?? ""}`.trim());
+  setText(byLabel("하차역"), a.destination ?? "—");
+  setText(
+    byLabel("규격"),
+    d ? `${d.width} × ${d.height} × ${d.depth}cm · ${a.volumeL}L` : `${a.volumeL}L`,
+  );
+  setText(byLabel("등록번호"), a.itemId);
 });
 
 bind("S-06 적재 체크리스트", () => {
