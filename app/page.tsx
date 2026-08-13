@@ -1052,12 +1052,11 @@ export default function Home() {
   return (
     <main className="prototype-shell">
       <header className="site-topbar">
-        <div className="brand"><span>KTX</span><div><b>수하물 안심배정</b><small>화면기획서 v1.0 · 독립 프로토타입</small></div></div>
+        <div className="brand"><span>KTX</span><div><b>수하물 안심배정</b><small>BY Re:Move</small></div></div>
         <div className="mode-switch" role="tablist" aria-label="사용자 모드">
           <button className={mode === "passenger" ? "active" : ""} onClick={() => switchMode("passenger")}>승객용</button>
           <button className={mode === "staff" ? "active" : ""} onClick={() => switchMode("staff")}>역무원용</button>
         </div>
-        <div className="prototype-status"><i></i> 발표·시연용</div>
       </header>
 
       <section className="workspace">
