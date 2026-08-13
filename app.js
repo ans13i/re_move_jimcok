@@ -1372,7 +1372,7 @@ function paintUnload() {
       `<p class="trip-hint">하역할 역을 선택해 주세요.</p>` +
       `<div class="unload-card">` +
       `<div class="unload-top"><h2>${esc(picked.station)} 하역 예정</h2><span class="pill blue">${freight.length}건</span></div>` +
-      `<p>도착 ${STOP_TIMES[picked.station] ?? "-"} · 예상 작업 ${picked.estimatedSeconds}초` +
+      `<p>도착 ${STOP_TIMES[picked.station] ?? "-"}` +
       (picked.withinDwellLimit ? "" : ` · 정차 시간 초과 주의`) +
       `</p>` +
       `<div class="unload-progress"><span>확인 ${done} / ${ids.length}</span><div class="progress"><i></i></div></div>` +

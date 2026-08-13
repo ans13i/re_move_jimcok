@@ -112,7 +112,10 @@
 .trip-route{background:#fff;border:1px solid #e1e8ed;border-radius:13px;padding:5px 4px;display:flex;flex-direction:column}
 /* 역마다 한 줄. 세로 연결선으로 노선처럼 잇고, 줄 전체가 누르는 영역입니다. */
 .trip-stop{position:relative;display:grid;grid-template-columns:26px 1fr auto auto 10px;align-items:center;gap:8px;border:0;background:transparent;border-radius:10px;padding:10px 9px;text-align:left;min-height:44px;width:100%}
-.trip-stop:not(:last-child):before{content:"";position:absolute;left:21px;top:calc(50% + 6px);bottom:-2px;width:2px;background:#c4d3e2;pointer-events:none}
+/* 연결선은 칸마다 끊지 않고 한 줄로 이어지게 그립니다. 양 끝만 점 중심에서 끝냅니다. */
+.trip-stop:before{content:"";position:absolute;left:21px;top:0;bottom:0;width:2px;background:#c4d3e2;pointer-events:none}
+.trip-stop:first-child:before{top:50%}
+.trip-stop:last-child:before{bottom:50%}
 .trip-stop i{width:11px;height:11px;border-radius:50%;border:2.5px solid #c4d3e2;background:#fff;justify-self:center;z-index:1}
 .trip-stop b{font-size:12px;color:#3d5062}
 .trip-stop small{font-size:9.5px;color:#8a98a1;font-variant-numeric:tabular-nums;justify-self:end}
