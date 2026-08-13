@@ -60,10 +60,31 @@ type Dims = { w: string; h: string; d: string };
 const DEFAULT_DIMS: Dims = { w: "60", h: "45", d: "30" };
 
 /**
- * AI가 응답하지 못했을 때 쓰는 값 — 24인치 캐리어 표준 외형(45×30×67cm).
+ * 사진 분석이 실패하거나 늦을 때 쓰는 값 — 24인치 캐리어 표준 외형(45×30×67cm).
  * 부피 90L라 보관대 한 칸(105L) 안에 들어가고 최장변 67cm라 "대형"으로 판정됩니다.
  */
 const AI_SCAN_RESULT: Dims = { w: "45", h: "30", d: "67" };
+
+/** /api/measure 응답에서 화면이 쓰는 부분 */
+type ScanResult = { widthCm: number; depthCm: number; heightCm: number; note: string; source: "llm" | "fallback" };
+
+/** 사진 분석을 기다리는 한도 (ms). 넘으면 표준 규격으로 넘어갑니다. */
+const MEASURE_TIMEOUT_MS = 8_000;
+
+/**
+ * 사진을 긴 변 768px·JPEG로 줄여 data URL로 만듭니다.
+ * 원본을 그대로 올리면 수 MB라 서버리스 함수 본문 한도에 걸리고 느립니다.
+ */
+async function toCompactDataUrl(file: File, max = 768): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
 
 
 
@@ -442,30 +463,55 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
   const [trip, setTrip] = useState<"one"|"round">("one");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [scan, setScan] = useState<"idle"|"analyzing"|"done">("idle");
+  const [scanNote, setScanNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const openPicker = () => fileRef.current?.click();
 
   /**
-   * 사진을 붙이면 크기 인식 단계로 넘어갑니다.
+   * 사진을 붙이면 /api/measure로 보내 Claude가 치수를 읽습니다.
    *
-   * 실제 이미지 분석은 하지 않습니다. 인식되는 것처럼 잠깐 보여준 뒤 24인치
-   * 캐리어 표준 규격을 채워 넣고, 값이 틀리면 승객이 화면에서 직접 고칩니다.
+   * 읽어온 값은 그대로 가로·세로·높이 입력란에 들어가고, 승객이 그 자리에서
+   * 고칠 수 있습니다. 호출이 실패하거나 8초를 넘기면 24인치 표준 규격으로
+   * 넘어가므로 발표 중 네트워크가 느려도 화면이 멈추지 않습니다.
    */
-  const onPickPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";  // 같은 파일을 다시 골라도 change가 나도록 비웁니다.
     if (!file) return;
 
     setPhotoUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setScan("analyzing");
+    setScanNote("");
     go(3);
 
-    setTimeout(() => {
-      setSize("custom");
-      setDims(() => ({ ...AI_SCAN_RESULT }));
-      setScan("done");
-    }, 1600);
+    let r: ScanResult | null = null;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), MEASURE_TIMEOUT_MS);
+    try {
+      const image = await toCompactDataUrl(file);
+      const res = await fetch("/api/measure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image }),
+        signal: abort.signal,
+      });
+      if (res.ok) r = await res.json();
+    } catch {
+      // 타임아웃이든 네트워크 오류든 아래 표준 규격으로 진행합니다.
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // widthCm=가로 · depthCm=세로 · heightCm=높이
+    const measured: Dims = r
+      ? { w: String(r.widthCm), h: String(r.depthCm), d: String(r.heightCm) }
+      : { ...AI_SCAN_RESULT };
+
+    setScanNote(r?.source === "llm" && r.note ? r.note : "");
+    setSize("custom");
+    setDims(() => measured);
+    setScan("done");
   };
 
   const photoInput = <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickPhoto}/>;
@@ -567,6 +613,7 @@ function PassengerScreen({ index, go, dest, setDest, size, setSize, weight, setW
               </label>
             ))}
           </div>
+          {scanNote && <p className="dim-note-ai"><KrlIcon name="sparkle"/>{scanNote}</p>}
           <p className="dim-hint"><KrlIcon name="info"/>인식된 값이 실제와 다르면 직접 입력해 주세요.</p>
 
           <h3 className="reg-question">예상 무게</h3>
